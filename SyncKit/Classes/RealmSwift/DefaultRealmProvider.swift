@@ -90,10 +90,9 @@ public class DefaultRealmProvider: NSObject, AdapterProvider {
     }
     
     private func realmSwiftAdapterFor(targetRealmURL: URL, persistenceRealmURL: URL, zoneID: CKRecordZone.ID) -> RealmSwiftAdapter {
-        
+
         let targetConfiguration = Realm.Configuration(fileURL: targetRealmURL,
                                                       inMemoryIdentifier: self.realmConfiguration.inMemoryIdentifier,
-                                                      syncConfiguration: self.realmConfiguration.syncConfiguration,
                                                       encryptionKey: self.realmConfiguration.encryptionKey,
                                                       readOnly: self.realmConfiguration.readOnly,
                                                       schemaVersion: self.realmConfiguration.schemaVersion,

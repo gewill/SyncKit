@@ -1,20 +1,21 @@
-// swift-tools-version:5.3
+// swift-tools-version:5.9
 import PackageDescription
 
 let package = Package(
     name: "SyncKit",
     platforms: [
-        .macOS(.v10_12),
-        .iOS(.v11),
-        .tvOS(.v11),
-        .watchOS(.v3)
+        .macOS(.v10_13),
+        .iOS(.v12),
+        .tvOS(.v12),
+        .watchOS(.v4)
     ],
     products: [
-        .library(name: "SyncKit/CoreData", targets: ["SyncKit/CoreData"]),
-        .library(name: "SyncKit/Realm", targets: ["SyncKit/Realm"]),
-        .library(name: "SyncKit/RealmSwift", targets: ["SyncKit/RealmSwift"])],
+        .library(name: "SyncKitCoreData", targets: ["SyncKit/CoreData"]),
+        .library(name: "SyncKitRealm", targets: ["SyncKit/Realm"]),
+        .library(name: "SyncKit_RealmSwift", targets: ["SyncKit/RealmSwift"])
+    ],
     dependencies: [
-        .package(url: "https://github.com/realm/realm-cocoa", from: "10.54.0")
+        .package(url: "https://github.com/realm/realm-swift", from: "20.0.0")
     ],
     targets: [
         .target(
@@ -31,15 +32,14 @@ let package = Package(
          .target(
             name: "SyncKit/Realm",
             dependencies: [
-                .product(name: "Realm", package: "realm-cocoa")
+                .product(name: "Realm", package: "realm-swift")
             ],
             path: "SyncKit/Classes/Realm"
         ),
         .target(
             name: "SyncKit/RealmSwift",
             dependencies: [
-                .product(name: "RealmSwift", package: "realm-cocoa"),
-                .product(name: "Realm", package: "realm-cocoa")
+                .product(name: "RealmSwift", package: "realm-swift")
             ],
             path: "SyncKit/Classes/RealmSwift"
         )
