@@ -8,7 +8,7 @@
 import Foundation
 import CloudKit
 
-class ModifyRecordsOperation: CloudKitSynchronizerOperation {
+class ModifyRecordsOperation: CloudKitSynchronizerOperation, @unchecked Sendable {
     let database: CloudKitDatabaseAdapter
     let records: [CKRecord]?
     let recordIDsToDelete: [CKRecord.ID]?

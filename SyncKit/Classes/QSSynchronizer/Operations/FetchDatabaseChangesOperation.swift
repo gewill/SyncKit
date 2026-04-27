@@ -8,7 +8,7 @@
 import Foundation
 import CloudKit
 
-class FetchDatabaseChangesOperation: CloudKitSynchronizerOperation {
+class FetchDatabaseChangesOperation: CloudKitSynchronizerOperation, @unchecked Sendable {
     
     let database: CloudKitDatabaseAdapter
     let databaseToken: CKServerChangeToken?

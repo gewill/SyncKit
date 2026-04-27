@@ -8,7 +8,7 @@
 import Foundation
 import CoreData
 
-class QSManagedObjectContext: NSManagedObjectContext {
+class QSManagedObjectContext: NSManagedObjectContext, @unchecked Sendable {
     
     override func perform(_ block: @escaping () -> Void) {
         performAndWait(block)

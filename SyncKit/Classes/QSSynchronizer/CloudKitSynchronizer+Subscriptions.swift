@@ -58,7 +58,7 @@ import CloudKit
                 completion?(nil)
             } else {
                 // Create new one
-                let subscription = CKDatabaseSubscription()
+                let subscription = CKDatabaseSubscription(subscriptionID: UUID().uuidString)
                 let notificationInfo = CKSubscription.NotificationInfo()
                 notificationInfo.shouldSendContentAvailable = true
                 subscription.notificationInfo = notificationInfo
@@ -102,7 +102,7 @@ import CloudKit
                 completion?(nil)
             } else {
                 // Create new one
-                let subscription = CKRecordZoneSubscription(zoneID: zoneID)
+                let subscription = CKRecordZoneSubscription(zoneID: zoneID, subscriptionID: UUID().uuidString)
                 let notificationInfo = CKSubscription.NotificationInfo()
                 notificationInfo.shouldSendContentAvailable = true
                 subscription.notificationInfo = notificationInfo

@@ -409,7 +409,7 @@ extension CoreDataAdapter {
                 
                 let recordID = CKRecord.ID(recordName: entity.identifier!, zoneID: self.recordZoneID)
                 // if we set the parent we must make the action .deleteSelf, otherwise we get errors if we ever try to delete the parent record
-                let action: CKRecord.Reference.Action = parentKey == relationshipName ? .deleteSelf : .none
+                let action: CKRecord.ReferenceAction = parentKey == relationshipName ? .deleteSelf : .none
                 let recordReference = CKRecord.Reference(recordID: recordID, action: action)
                 record[relationshipName] = recordReference
             }
@@ -419,7 +419,7 @@ extension CoreDataAdapter {
             (entityState == .new || changedKeys.contains(parentKey)),
             let reference = record[parentKey] as? CKRecord.Reference {
             // For the parent reference we have to use action .none though, even if we must use .deleteSelf for the attribute (see ^)
-            record.parent = CKRecord.Reference(recordID: reference.recordID, action: CKRecord.Reference.Action.none)
+            record.parent = CKRecord.Reference(recordID: reference.recordID, action: CKRecord.ReferenceAction.none)
             parentEntity = referencedEntities[parentKey]
         }
         

@@ -77,7 +77,7 @@ import Realm
     }
     
     fileprivate static func applicationDocumentsDirectory() -> String? {
-        #if TARGET_OS_IPHONE
+        #if os(iOS) || os(watchOS) || os(tvOS)
         return NSSearchPathForDirectoriesInDomains(.libraryDirectory, .userDomainMask, true).last
         #else
         let urls = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)

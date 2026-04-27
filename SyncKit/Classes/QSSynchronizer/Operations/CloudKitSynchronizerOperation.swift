@@ -7,7 +7,7 @@
 
 import Foundation
 
-class CloudKitSynchronizerOperation: Operation {
+class CloudKitSynchronizerOperation: Operation, @unchecked Sendable {
     override var isAsynchronous: Bool { return true }
     override var isExecuting: Bool { return state == .executing }
     override var isFinished: Bool { return state == .finished }

@@ -17,7 +17,7 @@ class FetchZoneChangesOperationZoneResult: NSObject {
     var moreComing: Bool = false
 }
 
-class FetchZoneChangesOperation: CloudKitSynchronizerOperation {
+class FetchZoneChangesOperation: CloudKitSynchronizerOperation, @unchecked Sendable {
     
     let database: CloudKitDatabaseAdapter
     let zoneIDs: [CKRecordZone.ID]

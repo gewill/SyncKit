@@ -58,7 +58,7 @@ extension CloudKitSynchronizer {
 
 extension CloudKitSynchronizer {
     
-    func postNotification(_ notification: Notification.Name, object: Any? = self, userInfo: [AnyHashable: Any]? = nil) {
+    func postNotification(_ notification: Notification.Name, object: Any? = CloudKitSynchronizer.self, userInfo: [AnyHashable: Any]? = nil) {
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: notification, object: object, userInfo: userInfo)
         }

@@ -29,7 +29,7 @@ extension Realm {
     }
 }
 
-public protocol RealmSwiftAdapterDelegate: class {
+public protocol RealmSwiftAdapterDelegate: AnyObject {
     
     /**
      *  Asks the delegate to resolve conflicts for a managed object when using a custom mergePolicy.
@@ -42,7 +42,7 @@ public protocol RealmSwiftAdapterDelegate: class {
     func realmSwiftAdapter(_ adapter:RealmSwiftAdapter, gotChanges changes: [String: Any], object: Object)
 }
 
-public protocol RealmSwiftAdapterRecordProcessing: class {
+public protocol RealmSwiftAdapterRecordProcessing: AnyObject {
     
     /**
      *  Called by the adapter before copying a property from the Realm object to the CloudKit record to upload to CloudKit.
