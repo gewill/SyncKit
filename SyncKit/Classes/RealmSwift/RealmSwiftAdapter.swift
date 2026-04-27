@@ -204,14 +204,22 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
     func setup() {
         
         realmProvider = RealmProvider(persistenceConfiguration: persistenceRealmConfiguration, targetConfiguration: targetRealmConfiguration)
-        
-        let needsInitialSetup = realmProvider.persistenceRealm.objects(SyncedEntity.self).count <= 0
-        
-        for schema in realmProvider.targetRealm.schema.objectSchema {
-            
+
+        guard let provider = realmProvider else {
+            debugPrint("RealmSwiftAdapter: Failed to initialize RealmProvider — check Realm configuration and migration")
+            return
+        }
+
+        let needsInitialSetup = provider.persistenceRealm.objects(SyncedEntity.self).count <= 0
+
+        for schema in provider.targetRealm.schema.objectSchema {
+
             let objectClass = realmObjectClass(name: schema.className)
-            let primaryKey = objectClass.primaryKey()!
-            let results = realmProvider.targetRealm.objects(objectClass)
+            guard let primaryKey = objectClass.primaryKey() else {
+                debugPrint("RealmSwiftAdapter: Skipping \(schema.className) — no primary key defined")
+                continue
+            }
+            let results = provider.targetRealm.objects(objectClass)
             
             // Register for collection notifications
             let token = results.observe({ [weak self] (collectionChange) in
@@ -271,20 +279,20 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                 
                 if needsInitialSetup {
                     
-                    createSyncedEntity(entityType: schema.className, identifier: identifier, realm: realmProvider.persistenceRealm)
+                    createSyncedEntity(entityType: schema.className, identifier: identifier, realm: provider.persistenceRealm)
                 }
                 
                 objectNotificationTokens[identifier] = token
             }
         }
         
-        let token = realmProvider.targetRealm.observe { [weak self] (_, _) in
+        let token = provider.targetRealm.observe { [weak self] (_, _) in
             
             self?.enqueueObjectUpdates()
         }
         collectionNotificationTokens.append(token)
         
-        updateHasChanges(realm: realmProvider.persistenceRealm)
+        updateHasChanges(realm: provider.persistenceRealm)
         
         if hasChanges {
             
@@ -306,10 +314,12 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
     }
     
     func setupChildrenRelationshipsLookup() {
-        
+
+        guard let provider = realmProvider else { return }
+
         childRelationships.removeAll()
-        
-        for objectSchema in realmProvider.targetRealm.schema.objectSchema {
+
+        for objectSchema in provider.targetRealm.schema.objectSchema {
             
             let objectClass = realmObjectClass(name: objectSchema.className)
             if let parentClass = objectClass.self as? ParentKey.Type {
