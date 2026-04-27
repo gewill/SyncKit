@@ -28,6 +28,8 @@ class ModifyRecordsOperation: CloudKitSynchronizerOperation, @unchecked Sendable
     weak var internalOperation: CKModifyRecordsOperation?
         
     override func start() {
+        super.start()
+        guard !isCancelled else { return }
         let operation = CKModifyRecordsOperation(recordsToSave: records, recordIDsToDelete: recordIDsToDelete)
         
         operation.perRecordCompletionBlock = { record, error in

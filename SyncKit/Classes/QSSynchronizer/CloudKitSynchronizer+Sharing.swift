@@ -73,13 +73,15 @@ import CloudKit
             return
         }
 
-        database.fetch(withRecordID: record.recordID) { (updated, error) in
+        database.fetch(withRecordID: record.recordID) { (updated, fetchError) in
             if let updated = updated {
                 modelAdapter.prepareToImport()
                 modelAdapter.saveChanges(in: [updated])
-                modelAdapter.persistImportedChanges { (error) in
-                    modelAdapter.didFinishImport(with: error)
+                modelAdapter.persistImportedChanges { (persistError) in
+                    modelAdapter.didFinishImport(with: persistError)
                 }
+            } else if let fetchError = fetchError {
+                debugPrint("QSCloudKitSynchronizer >> Error fetching record after share removal: \(fetchError)")
             }
         }
     }
@@ -154,11 +156,15 @@ import CloudKit
                        !conflicted.isEmpty {
                         modelAdapter.prepareToImport()
                         modelAdapter.saveChanges(in: conflicted)
-                        modelAdapter.persistImportedChanges { (error) in
-                            modelAdapter.didFinishImport(with: error)
+                        modelAdapter.persistImportedChanges { (persistError) in
+                            modelAdapter.didFinishImport(with: persistError)
                             DispatchQueue.main.async {
                                 self.syncing = false
-                                self.share(object: object, publicPermission: publicPermission, participants: participants, completion: completion)
+                                if let persistError = persistError {
+                                    completion?(nil, persistError)
+                                } else {
+                                    self.share(object: object, publicPermission: publicPermission, participants: participants, completion: completion)
+                                }
                             }
                         }
                     } else {
@@ -376,17 +382,15 @@ import CloudKit
             
             self.dispatchQueue.async {
                 
-                if let deletedRecordID = deletedRecordIDs?.first,
-                   deletedRecordID == share.recordID,
-                   operationError == nil {
-                    
+                if operationError == nil {
+
                     modelAdapter.deleteShareForRecordZone()
-                    
+
                     DispatchQueue.main.async {
                         self.syncing = false
                         completion?(nil)
                     }
-                    
+
                 } else {
                     
                     DispatchQueue.main.async {
@@ -450,7 +454,7 @@ import CloudKit
                         
                         if let error = operationError {
                             if self.isLimitExceededError(error as NSError) {
-                                self.batchSize = self.batchSize / 2
+                                self.batchSize = max(1, self.batchSize / 2)
                             }
                         }
                         

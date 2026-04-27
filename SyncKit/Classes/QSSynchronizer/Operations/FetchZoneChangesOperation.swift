@@ -52,7 +52,9 @@ class FetchZoneChangesOperation: CloudKitSynchronizerOperation, @unchecked Senda
     }
     
     override func start() {
-        
+        super.start()
+        guard !isCancelled else { return }
+
         for zone in zoneIDs {
             zoneResults[zone] = FetchZoneChangesOperationZoneResult()
         }

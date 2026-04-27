@@ -111,9 +111,16 @@ extension CloudKitSynchronizer {
     func shouldRetryUpload(for error: NSError) -> Bool {
         if isServerRecordChangedError(error) || isLimitExceededError(error) {
             return uploadRetries < 2
-        } else {
-            return false
         }
+
+        let transientCodes: [CKError.Code] = [
+            .requestRateLimited, .networkUnavailable, .networkFailure, .serviceUnavailable,
+        ]
+        if transientCodes.contains(CKError.Code(rawValue: error.code) ?? .unknownItem) {
+            return uploadRetries < 3
+        }
+
+        return false
     }
     
     func isServerRecordChangedError(_ error: NSError) -> Bool {
@@ -256,8 +263,7 @@ extension CloudKitSynchronizer {
                 for (zoneID, result) in zoneResults {
                     let adapter = self.modelAdapterDictionary[zoneID]
                     if let resultError = result.error {
-                        if (self.isZoneNotFoundOrDeletedError(error))
-                        {
+                        if self.isZoneNotFoundOrDeletedError(resultError) {
                             self.notifyProviderForDeletedZoneIDs([zoneID])
                         }
                         else
@@ -428,7 +434,7 @@ extension CloudKitSynchronizer {
                     } else if !conflicted.isEmpty {
                         adapter.saveChanges(in: conflicted)
                         adapter.persistImportedChanges { (persistError) in
-                            completion(error)
+                            completion(persistError ?? error)
                         }
                     } else {
                         completion(error)
@@ -528,7 +534,13 @@ extension CloudKitSynchronizer {
                 
                 for (zoneID, result) in zoneResults {
                     let adapter = self.modelAdapterDictionary[zoneID]
-                    if result.downloadedRecords.count > 0 || result.deletedRecordIDs.count > 0 {
+                    if let zoneError = result.error {
+                        debugPrint("QSCloudKitSynchronizer >> Zone \(zoneID) update error: \(zoneError)")
+                        if self.isZoneNotFoundOrDeletedError(zoneError) {
+                            self.notifyProviderForDeletedZoneIDs([zoneID])
+                        }
+                        needsToRefetch = true
+                    } else if result.downloadedRecords.count > 0 || result.deletedRecordIDs.count > 0 {
                         needsToRefetch = true
                     } else {
                         self.activeZoneTokens[zoneID] = result.serverChangeToken
@@ -550,7 +562,7 @@ extension CloudKitSynchronizer {
     }
     
     func reduceBatchSize() {
-        self.batchSize = self.batchSize / 2
+        self.batchSize = max(1, self.batchSize / 2)
     }
     
     func increaseBatchSize() {

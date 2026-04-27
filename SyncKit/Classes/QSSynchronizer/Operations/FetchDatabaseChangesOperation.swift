@@ -27,6 +27,7 @@ class FetchDatabaseChangesOperation: CloudKitSynchronizerOperation, @unchecked S
     
     override func start() {
         super.start()
+        guard !isCancelled else { return }
 
         let databaseChangesOperation = CKFetchDatabaseChangesOperation(previousServerChangeToken: databaseToken)
         databaseChangesOperation.fetchAllChanges = true
@@ -47,6 +48,9 @@ class FetchDatabaseChangesOperation: CloudKitSynchronizerOperation, @unchecked S
                 }
 
                 self.finish(error: operationError)
+            } else {
+                debugPrint("QSCloudKitSynchronizer >> moreComing=true in fetchDatabaseChanges")
+                self.finish(error: operationError ?? CKError(.changeTokenExpired))
             }
         }
 
