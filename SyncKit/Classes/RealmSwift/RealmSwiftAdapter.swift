@@ -592,11 +592,13 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                         continue
                     }
                     
-                    if !shouldIgnore(key: property.name) &&
-                    !changedKeys.contains(property.name) &&
-                        syncedEntity.state != SyncedEntityState.new.rawValue {
+                    if !shouldIgnore(key: property.name) {
+                        let isModifiedLocally = changedKeys.contains(property.name)
+                        let isNew = syncedEntity.state == SyncedEntityState.new.rawValue
                         
-                        applyChange(property: property.name, record: record, object: object, syncedEntity: syncedEntity, realmProvider: realmProvider)
+                        if !isModifiedLocally && (!isNew || object.value(forKey: property.name) == nil) {
+                            applyChange(property: property.name, record: record, object: object, syncedEntity: syncedEntity, realmProvider: realmProvider)
+                        }
                     }
                 }
                 
@@ -651,10 +653,15 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             return
         }
         
+        let currentValue = object.value(forKey: key)
+        
         if let encrypted = entityEncryptedFields[syncedEntity.entityType],
            encrypted.contains(key) {
             if #available(iOS 15, OSX 12, watchOS 8.0, *) {
-                object.setValue(record.encryptedValues[key], forKey: key)
+                let newValue = record.encryptedValues[key]
+                if !isEquivalent(currentValue, newValue) {
+                    object.setValue(newValue, forKey: key)
+                }
             }
         } else {
             let value = record[key]
@@ -668,15 +675,33 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             } else if let asset = value as? CKAsset {
                 if let fileURL = asset.fileURL,
                     let data =  NSData(contentsOf: fileURL) {
-                    object.setValue(data, forKey: key)
+                    if !isEquivalent(currentValue, data) {
+                        object.setValue(data, forKey: key)
+                    }
                 }
             } else if value != nil || object.objectSchema[key]?.isOptional == true {
-                // If property is not a relationship or value is nil and property is optional.
-                // If value is nil and property is non-optional, it is ignored. This is something that could happen
-                // when extending an object model with a new non-optional property, when an old record is applied to the object.
-                object.setValue(value, forKey: key)
+                if !isEquivalent(currentValue, value) {
+                    object.setValue(value, forKey: key)
+                }
             }
         }
+    }
+    
+    func isEquivalent(_ value1: Any?, _ value2: Any?) -> Bool {
+        if value1 == nil && value2 == nil { return true }
+        guard let v1 = value1, let v2 = value2 else { return false }
+        
+        if let d1 = v1 as? Data, let d2 = v2 as? Data {
+            return d1 == d2
+        } else if let s1 = v1 as? String, let s2 = v2 as? String {
+            return s1 == s2
+        } else if let n1 = v1 as? NSNumber, let n2 = v2 as? NSNumber {
+            return n1 == n2
+        } else if let date1 = v1 as? Date, let date2 = v2 as? Date {
+            return date1 == date2
+        }
+        
+        return false
     }
     
     func savePendingRelationship(name: String, syncedEntity: SyncedEntity, targetIdentifier: String, realm: Realm) {
