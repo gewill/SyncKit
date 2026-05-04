@@ -1,14 +1,12 @@
 # Changelog
 
-## 2.1.0
+## 2.0.0
 ### Added
 - Implemented Version Tracking for `SyncedEntity` to improve conflict resolution.
 - Added `version` property to `SyncedEntity` and `entityVersionKey` to CloudKit records for tracking object revisions.
 - Enhanced `.client` merge policy to use version tracking, distinguishing between concurrent modifications and base-revision updates.
 - Optimized Tombstone handling with Resurrection logic and Local Modification Protection.
 - Implemented Exponential Backoff with Jitter retry strategy for CloudKit operations to improve sync reliability.
-
-## 2.0.0
 ### Removed
 - Removed support for Core Data and legacy Realm (RLMObject). SyncKit now focuses exclusively on RealmSwift.
 ### Changed

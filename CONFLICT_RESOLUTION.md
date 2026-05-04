@@ -1,6 +1,6 @@
 # Advanced Conflict Resolution in SyncKit
 
-SyncKit 2.1.0 introduces sophisticated conflict resolution mechanisms to ensure data integrity across multiple devices. This document explains the three pillars of our conflict resolution strategy: **Version Tracking**, **Delta Counters**, and **Semantic List Merging**.
+SyncKit 2.0.0 introduces sophisticated conflict resolution mechanisms to ensure data integrity across multiple devices. This document explains the three pillars of our conflict resolution strategy: **Version Tracking**, **Delta Counters**, and **Semantic List Merging**.
 
 ## 1. Version Tracking
 
@@ -61,7 +61,7 @@ You can configure the behavior of the `CloudKitSynchronizer` via the `ModelAdapt
 
 ## 4. Tombstone Optimization (Delete-Modify Conflicts)
 
-SyncKit 2.1.0 improves handling of conflicts where one user deletes an object while another modifies it.
+SyncKit 2.0.0 improves handling of conflicts where one user deletes an object while another modifies it.
 
 ### Resurrection (Server Modify vs Local Delete)
 If an object is marked for deletion locally (`.deleted` state) but a newer modification arrives from the server (based on `modificationDate` or `version`), SyncKit will **resurrect** the object. It recreates the object in the target Realm and applies the server changes, ensuring that a "late" modification from another user is not lost just because one user chose to delete their local copy.

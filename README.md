@@ -8,6 +8,7 @@ SyncKit uses introspection to work with any model. It sits next to your Realm st
 
 - [x] CloudKit synchronization for RealmSwift.
 - [x] Advanced conflict resolution (Version Tracking, Delta Counters, Semantic List Merging). See [Conflict Resolution Guide](CONFLICT_RESOLUTION.md).
+- [x] Migration support from older versions. See [Migration Guide](MIGRATION_2.0.md).
 - [x] Resilient sync with Exponential Backoff and Jitter retries.
 - [x] Support for custom record zones.
 - [x] Support for sharing records.
@@ -20,7 +21,7 @@ Add SyncKit to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/mentrena/SyncKit", from: "2.1.0")
+    .package(url: "https://github.com/mentrena/SyncKit", from: "2.0.0")
 ]
 ```
 
