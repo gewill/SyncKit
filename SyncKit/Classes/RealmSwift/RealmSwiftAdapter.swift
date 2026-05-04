@@ -401,6 +401,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             if let syncedEntity = syncedEntity {
                 try? realmProvider.persistenceRealm.safeWrite {
                     syncedEntity.state = SyncedEntityState.deleted.rawValue
+                    syncedEntity.updated = Date()
                 }
             }
             
@@ -442,6 +443,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             
             try? realmProvider.persistenceRealm.safeWrite {
                 syncedEntity.changedKeys = (changedKeys.allObjects as! [String]).joined(separator: ",")
+                syncedEntity.updated = Date()
                 if syncedEntity.state == SyncedEntityState.synced.rawValue && !syncedEntity.changedKeys!.isEmpty {
                     syncedEntity.state = SyncedEntityState.changed.rawValue
                     // If state was New then leave it as that
@@ -464,6 +466,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
     func createSyncedEntity(entityType: String, identifier: String, realm: Realm) -> SyncedEntity {
         
         let syncedEntity = SyncedEntity(entityType: entityType, identifier: "\(entityType).\(identifier)", state: SyncedEntityState.new.rawValue)
+        syncedEntity.updated = Date()
         
         try? realm.safeWrite {
             realm.add(syncedEntity)
@@ -584,7 +587,12 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                 
             } else if mergePolicy == .client {
                 
-                let changedKeys: [String] = syncedEntity.changedKeys?.components(separatedBy: ",") ?? []
+                let changedKeysString = syncedEntity.changedKeys ?? ""
+                var changedKeys: [String] = changedKeysString.components(separatedBy: ",")
+                let serverDate = record.modificationDate
+                let localDate = syncedEntity.updated
+                let serverIsNewer = serverDate != nil && localDate != nil && serverDate! > localDate!
+                var keysToRemove = [String]()
                 
                 for property in object.objectSchema.properties {
                     
@@ -596,9 +604,20 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                         let isModifiedLocally = changedKeys.contains(property.name)
                         let isNew = syncedEntity.state == SyncedEntityState.new.rawValue
                         
-                        if !isModifiedLocally && (!isNew || object.value(forKey: property.name) == nil) {
+                        if !isModifiedLocally || serverIsNewer || (isNew && object.value(forKey: property.name) == nil) {
                             applyChange(property: property.name, record: record, object: object, syncedEntity: syncedEntity, realmProvider: realmProvider)
+                            if isModifiedLocally && serverIsNewer {
+                                keysToRemove.append(property.name)
+                            }
                         }
+                    }
+                }
+                
+                if !keysToRemove.isEmpty {
+                    changedKeys.removeAll { keysToRemove.contains($0) }
+                    syncedEntity.changedKeys = changedKeys.joined(separator: ",")
+                    if syncedEntity.changedKeys?.isEmpty == true {
+                        syncedEntity.state = SyncedEntityState.synced.rawValue
                     }
                 }
                 
