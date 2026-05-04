@@ -36,22 +36,25 @@ Ensure your app has the **iCloud** capability enabled in Xcode with **CloudKit**
 
 ```swift
 import SyncKit
+import RealmSwift
+import CloudKit
 
-// Define your Realm configurations
+// 1. Configure your Realm and CloudKit Zone
 let targetConfig = Realm.Configuration(...)
-let persistenceConfig = Realm.Configuration(...) // Used by SyncKit for metadata
+let zoneID = CKRecordZone.ID(zoneName: "MyCustomZone", ownerName: CKCurrentUserDefaultName)
 
-// Initialize the RealmSwift adapter provider
+// 2. Initialize the RealmSwift adapter provider
 let adapterProvider = DefaultRealmSwiftAdapterProvider(
-    targetRealmConfiguration: targetConfig,
-    persistenceRealmConfiguration: persistenceConfig
+    targetConfiguration: targetConfig,
+    zoneID: zoneID
 )
 
-// Create the synchronizer
+// 3. Create the synchronizer with the default database adapter
+let databaseAdapter = DefaultCloudKitDatabaseAdapter(database: CKContainer.default().privateCloudDatabase)
 let synchronizer = CloudKitSynchronizer(
     identifier: "MySynchronizer",
     containerIdentifier: "iCloud.com.mycompany.myapp",
-    database: CKContainer.default().privateCloudDatabase,
+    database: databaseAdapter,
     adapterProvider: adapterProvider
 )
 ```
@@ -70,7 +73,21 @@ synchronizer.synchronize { error in
 
 ## Advanced Conflict Resolution
 
-SyncKit provides several advanced mechanisms to handle data synchronization conflicts. For a detailed guide on how Version Tracking, Delta Counters, and Semantic Merging work, see the [Conflict Resolution Guide](CONFLICT_RESOLUTION.md).
+SyncKit provides several advanced mechanisms to handle data synchronization conflicts:
+
+- **Version Tracking**: Automatic causal ordering of changes.
+- **Delta Counters**: Lossless merging for numeric fields.
+- **Semantic List Merging**: Set-based merging for Realm `List` properties.
+
+To use these features, configure your `RealmSwiftAdapter`:
+
+```swift
+let adapter = adapterProvider.adapter as! RealmSwiftAdapter
+adapter.counterProvider = myObject // Implement RealmSwiftAdapterCounterProvider
+adapter.mergePolicy = .client // Or .custom with a delegate
+```
+
+For a detailed guide, see the [Conflict Resolution Guide](CONFLICT_RESOLUTION.md).
 
 ## License
 
