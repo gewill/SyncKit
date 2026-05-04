@@ -54,3 +54,15 @@ You can configure the behavior of the `CloudKitSynchronizer` via the `ModelAdapt
 - `.server`: Server always wins. Local changes are discarded if a conflict occurs.
 - `.client` (Default): Uses the Smart LWW logic (Vector Clocks + Timestamps) described above.
 - `.custom`: Allows you to provide a delegate to handle conflicts manually on a per-field basis.
+
+## 4. Tombstone Optimization (Delete-Modify Conflicts)
+
+SyncKit 2.1.0 improves handling of conflicts where one user deletes an object while another modifies it.
+
+### Resurrection (Server Modify vs Local Delete)
+If an object is marked for deletion locally (`.deleted` state) but a newer modification arrives from the server (based on `modificationDate` or `version`), SyncKit will **resurrect** the object. It recreates the object in the target Realm and applies the server changes, ensuring that a "late" modification from another user is not lost just because one user chose to delete their local copy.
+
+### Local Modify Protection (Server Delete vs Local Modify)
+If a deletion instruction arrives from the server for an object that has pending local changes (`.changed` or `.new` state), SyncKit will **ignore the deletion**. This prevents local data loss. The object will persist locally and be re-uploaded to CloudKit in the next sync cycle, effectively "winning" over the deletion.
+
+These mechanisms work together to ensure that SyncKit prioritizes data preservation in collaborative environments.

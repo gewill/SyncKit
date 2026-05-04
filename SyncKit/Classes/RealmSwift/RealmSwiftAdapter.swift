@@ -1214,6 +1214,24 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                     } else {
                         syncedEntity = createSyncedEntity(record: record, realmProvider: self.realmProvider)
                     }
+                } else if syncedEntity.entityState == .deleted && syncedEntity.entityType != "CKShare" {
+                    let serverDate = record.modificationDate
+                    let localDate = syncedEntity.updated
+                    let serverVersion = record[CloudKitSynchronizer.entityVersionKey] as? Int ?? 0
+                    let localVersion = syncedEntity.version
+                    
+                    if (serverDate != nil && localDate != nil && serverDate! > localDate!) || serverVersion > localVersion {
+                        // Resurrect
+                        let objectClass = realmObjectClass(name: record.recordType)
+                        let primaryKey = objectClass.primaryKey()!
+                        let objectIdentifier = getObjectIdentifier(for: syncedEntity)
+                        if self.realmProvider.targetRealm.object(ofType: objectClass, forPrimaryKey: objectIdentifier) == nil {
+                            let object = objectClass.init()
+                            object.setValue(objectIdentifier, forKey: primaryKey)
+                            self.realmProvider.targetRealm.add(object)
+                        }
+                        syncedEntity.entityState = .synced
+                    }
                 }
                 
                 if syncedEntity.entityState != .deleted && syncedEntity.entityType != "CKShare" {
@@ -1252,6 +1270,12 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             for recordID in recordIDs {
                 
                 if let syncedEntity = getSyncedEntity(objectIdentifier: recordID.recordName, realm: self.realmProvider.persistenceRealm) {
+                    
+                    if syncedEntity.entityState == .changed || syncedEntity.entityState == .new {
+                        // Local modification found. Skip deletion to avoid data loss.
+                        // The next sync will re-upload this record to CloudKit.
+                        continue
+                    }
                     
                     if syncedEntity.entityType != "CKShare" {
                         
