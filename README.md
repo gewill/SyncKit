@@ -70,5 +70,9 @@ synchronizer.synchronize { error in
 ```
 
 ## Advanced Conflict Resolution
-...
+
+SyncKit provides several advanced mechanisms to handle data synchronization conflicts. For a detailed guide on how Version Tracking, Delta Counters, and Semantic Merging work, see the [Conflict Resolution Guide](CONFLICT_RESOLUTION.md).
+
+## License
+
 SyncKit is available under the MIT license. See the LICENSE file for more info.
