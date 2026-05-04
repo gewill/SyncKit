@@ -27,10 +27,11 @@ The following keys **remain unchanged** in their literal string values. This ens
 
 ### Internal Key Continuity
 
-SyncKit 2.0 uses the same internal keys as 1.0 for identifying the default record zone and storing local state in `UserDefaults`.
+SyncKit 2.0 uses the same internal keys as 1.0 for identifying the default record zone and storing local state in `UserDefaults`. These keys are now accessible as public static properties on `CloudKitSynchronizer`.
 
-- **Default Zone Name**: `QSCloudKitCustomZoneName`
-- **Server Token Key**: `QSDatabaseServerChangeTokenKey`
+- **Default Zone Name**: `CloudKitSynchronizer.defaultCustomZoneName` (`QSCloudKitCustomZoneName`)
+- **Default Zone ID**: `CloudKitSynchronizer.defaultCustomZoneID`
+- **Server Token Key**: `CloudKitSynchronizer.databaseServerChangeTokenKey` (`QSDatabaseServerChangeTokenKey`)
 
 **Migration Result**: Upgrading to SyncKit 2.0 is now a **seamless process**. Your app will automatically find the existing CloudKit zone and continue syncing from the last stored token without requiring a full re-download.
 

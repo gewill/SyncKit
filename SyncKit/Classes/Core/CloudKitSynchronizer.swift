@@ -158,9 +158,15 @@ public class CloudKitSynchronizer: NSObject {
 
     /// Default number of records to send in an upload operation.
     @objc public static var defaultBatchSize = 200
-    static let deviceUUIDKey = "QSCloudKitDeviceUUIDKey"
-    static let modelCompatibilityVersionKey = "QSCloudKitModelCompatibilityVersionKey"
+    @objc public static let deviceUUIDKey = "QSCloudKitDeviceUUIDKey"
+    @objc public static let modelCompatibilityVersionKey = "QSCloudKitModelCompatibilityVersionKey"
     @objc public static let entityVersionKey = "QSCloudKitEntityVersionKey"
+    @objc public static let defaultCustomZoneName = "QSCloudKitCustomZoneName"
+    @objc public static let databaseServerChangeTokenKey = "QSDatabaseServerChangeTokenKey"
+    
+    public static var defaultCustomZoneID: CKRecordZone.ID {
+        return CKRecordZone.ID(zoneName: defaultCustomZoneName, ownerName: CKCurrentUserDefaultName)
+    }
     
     /// Initializes a newly allocated synchronizer.
     /// - Parameters:

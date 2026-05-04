@@ -8,16 +8,10 @@
 import Foundation
 import CloudKit
 
-private let customZoneName = "QSCloudKitCustomZoneName"
 private let storedDeviceUUIDKey = "QSCloudKitStoredDeviceUUIDKey"
 private let subscriptionIdentifierKey = "QSSubscriptionIdentifierKey"
-private let databaseServerChangeTokenKey = "QSDatabaseServerChangeTokenKey"
 
 extension CloudKitSynchronizer {
-    
-    static var defaultCustomZoneID: CKRecordZone.ID {
-        return CKRecordZone.ID(zoneName: customZoneName, ownerName: CKCurrentUserDefaultName)
-    }
     
     var deviceUUID: String? {
         get {
@@ -35,14 +29,14 @@ extension CloudKitSynchronizer {
     
     var storedDatabaseToken: CKServerChangeToken? {
         get {
-            guard let encodedToken = keyValueStore.object(forKey: userDefaultsKey(for: databaseServerChangeTokenKey)) as? Data else {
+            guard let encodedToken = keyValueStore.object(forKey: userDefaultsKey(for: CloudKitSynchronizer.databaseServerChangeTokenKey)) as? Data else {
                 return nil
             }
             
             return Coder.shared.object(from: encodedToken) as? CKServerChangeToken
         }
         set {
-            let key = userDefaultsKey(for: databaseServerChangeTokenKey)
+            let key = userDefaultsKey(for: CloudKitSynchronizer.databaseServerChangeTokenKey)
             if let token = newValue,
                 let encodedToken = Coder.shared.data(from: token) {
                 keyValueStore.set(value: encodedToken, forKey: key)
