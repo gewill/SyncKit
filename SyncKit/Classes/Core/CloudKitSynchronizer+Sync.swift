@@ -16,6 +16,7 @@ extension CloudKitSynchronizer {
             self.delegate?.synchronizerWillStartSyncing(self)
             self.serverChangeToken = self.storedDatabaseToken
             self.uploadRetries = 0
+            self.fetchRetries = 0
             self.didNotifyUpload = Set<CKRecordZone.ID>()
             
             self.modelAdapters.forEach {
@@ -112,15 +113,30 @@ extension CloudKitSynchronizer {
         if isServerRecordChangedError(error) || isLimitExceededError(error) {
             return uploadRetries < 2
         }
+        return shouldRetry(for: error, retries: uploadRetries)
+    }
+    
+    func shouldRetryFetch(for error: NSError) -> Bool {
+        return shouldRetry(for: error, retries: fetchRetries)
+    }
 
+    func shouldRetry(for error: NSError, retries: Int) -> Bool {
+        let maxRetries = 5
         let transientCodes: [CKError.Code] = [
-            .requestRateLimited, .networkUnavailable, .networkFailure, .serviceUnavailable,
+            .requestRateLimited, .networkUnavailable, .networkFailure, .serviceUnavailable, .zoneBusy
         ]
-        if transientCodes.contains(CKError.Code(rawValue: error.code) ?? .unknownItem) {
-            return uploadRetries < 3
-        }
+        return transientCodes.contains(CKError.Code(rawValue: error.code) ?? .unknownItem) && retries < maxRetries
+    }
 
-        return false
+    func retryDelay(for error: NSError, retries: Int) -> TimeInterval {
+        if let retryAfter = error.userInfo[CKErrorRetryAfterKey] as? NSNumber {
+            return retryAfter.doubleValue
+        }
+        let baseDelay: TimeInterval = 1.0
+        let maxDelay: TimeInterval = 32.0
+        let delay = min(maxDelay, baseDelay * pow(2.0, Double(retries)))
+        let jitter = Double.random(in: 0...0.5) * delay
+        return delay + jitter
     }
     
     func isServerRecordChangedError(_ error: NSError) -> Bool {
@@ -198,11 +214,20 @@ extension CloudKitSynchronizer {
         postNotification(.SynchronizerWillFetchChanges)
         delegate?.synchronizerWillCheckForChanges(self)
         fetchDatabaseChanges() { token, error in
-            guard error == nil else {
-                self.finishSynchronization(error: error)
+            if let error = error {
+                let nsError = error as NSError
+                if self.shouldRetryFetch(for: nsError) {
+                    let delay = self.retryDelay(for: nsError, retries: self.fetchRetries)
+                    self.fetchRetries += 1
+                    self.dispatchQueue.asyncAfter(deadline: .now() + delay) {
+                        self.fetchChanges()
+                    }
+                } else {
+                    self.finishSynchronization(error: error)
+                }
                 return
             }
-            
+
             self.serverChangeToken = token
             self.storedDatabaseToken = token
             if self.syncMode == .sync {
@@ -210,8 +235,7 @@ extension CloudKitSynchronizer {
             } else {
                 self.finishSynchronization(error: nil)
             }
-        }
-    }
+        }    }
     
     func fetchDatabaseChanges(completion: @escaping (CKServerChangeToken?, Error?) -> ()) {
         
@@ -233,8 +257,17 @@ extension CloudKitSynchronizer {
                 }
                 
                 self.fetchZoneChanges(zoneIDsToFetch) { error in
-                    guard error == nil else {
-                        self.finishSynchronization(error: error)
+                    if let error = error {
+                        let nsError = error as NSError
+                        if self.shouldRetryFetch(for: nsError) {
+                            let delay = self.retryDelay(for: nsError, retries: self.fetchRetries)
+                            self.fetchRetries += 1
+                            self.dispatchQueue.asyncAfter(deadline: .now() + delay) {
+                                self.fetchChanges()
+                            }
+                        } else {
+                            self.finishSynchronization(error: error)
+                        }
                         return
                     }
                     
@@ -345,9 +378,13 @@ extension CloudKitSynchronizer {
         
         uploadChanges() { (error) in
             if let error = error {
-                if self.shouldRetryUpload(for: error as NSError) {
+                let nsError = error as NSError
+                if self.shouldRetryUpload(for: nsError) {
+                    let delay = self.retryDelay(for: nsError, retries: self.uploadRetries)
                     self.uploadRetries += 1
-                    self.fetchChanges()
+                    self.dispatchQueue.asyncAfter(deadline: .now() + delay) {
+                        self.fetchChanges()
+                    }
                 } else {
                     self.finishSynchronization(error: error)
                 }

@@ -152,6 +152,7 @@ public class CloudKitSynchronizer: NSObject {
     internal var completion: ((Error?) -> ())?
     internal weak var currentOperation: Operation?
     internal var uploadRetries = 0
+    internal var fetchRetries = 0
     internal var didNotifyUpload = Set<CKRecordZone.ID>()
 
 
