@@ -219,20 +219,6 @@ public class CloudKitSynchronizer: NSObject {
         self.completion = completion
         performSynchronization()
     }
-
-    /// Synchronize data with CloudKit using async/await.
-    @available(iOS 13.0, macOS 10.15, tvOS 13.0, watchOS 6.0, *)
-    public func synchronize() async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            synchronize { error in
-                if let error = error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume()
-                }
-            }
-        }
-    }
     
     /// Cancel synchronization. It will cause a current synchronization to end with a `cancelled` error.
     @objc public func cancelSynchronization() {

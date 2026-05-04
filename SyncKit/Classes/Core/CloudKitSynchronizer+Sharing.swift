@@ -183,7 +183,7 @@ import CloudKit
         }
         runOperation(operation)
     }
-    
+
     /**
      Removes the existing `CKShare` for an object and deletes it from CloudKit.
      - Parameters:
@@ -243,7 +243,7 @@ import CloudKit
         
         database.add(operation)
     }
-    
+
     /**
      Returns the locally stored `CKShare` for a given record zone.
      - Parameter zoneID  The record zone ID.
@@ -355,7 +355,7 @@ import CloudKit
         }
         runOperation(operation)
     }
-    
+
     /**
      Removes the existing `CKShare` for the record zone and deletes it from CloudKit.
      - Parameters:
