@@ -24,7 +24,7 @@ extension CloudKitSynchronizer {
     public class func privateSynchronizer(containerName: String, configuration: Realm.Configuration, suiteName: String? = nil, recordZoneID: CKRecordZone.ID? = nil) -> CloudKitSynchronizer {
         let zoneID = recordZoneID ?? defaultCustomZoneID
         let provider = DefaultRealmSwiftAdapterProvider(targetConfiguration: configuration, zoneID: zoneID)
-        let userDefaults = UserDefaults(suiteName: suiteName)!
+        let userDefaults = UserDefaults(suiteName: suiteName) ?? .standard
         let userDefaultsAdapter = UserDefaultsAdapter(userDefaults: userDefaults)
         let container = CKContainer(identifier: containerName)
         let synchronizer = CloudKitSynchronizer(identifier: "DefaultRealmSwiftPrivateSynchronizer",
@@ -48,7 +48,7 @@ extension CloudKitSynchronizer {
      */
     public class func sharedSynchronizer(containerName: String, configuration: Realm.Configuration, suiteName: String? = nil) -> CloudKitSynchronizer {
         
-        let userDefaults = UserDefaults(suiteName: suiteName)!
+        let userDefaults = UserDefaults(suiteName: suiteName) ?? .standard
         let userDefaultsAdapter = UserDefaultsAdapter(userDefaults: userDefaults)
         let container = CKContainer(identifier: containerName)
         let provider = DefaultRealmProvider(identifier: "DefaultRealmSwiftSharedStackProvider",

@@ -41,7 +41,7 @@ import CloudKit
             return
         }
         
-        database.fetchAllSubscriptions { (subscriptions, error) in
+        database.fetchAllSubscriptions { [weak self] (subscriptions, error) in
             
             guard error == nil else {
                 completion?(nil)
@@ -54,7 +54,7 @@ import CloudKit
             
             if let subscription = existingSubscription {
                 // Found existing subscription
-                self.databaseSubscriptionID = subscription.subscriptionID
+                self?.databaseSubscriptionID = subscription.subscriptionID
                 completion?(nil)
             } else {
                 // Create new one
@@ -63,10 +63,10 @@ import CloudKit
                 notificationInfo.shouldSendContentAvailable = true
                 subscription.notificationInfo = notificationInfo
                 
-                self.database.save(subscription: subscription, completionHandler: { (subscription, error) in
+                self?.database.save(subscription: subscription, completionHandler: { [weak self] (subscription, error) in
                     if error == nil,
                         let subscription = subscription {
-                        self.databaseSubscriptionID = subscription.subscriptionID
+                        self?.databaseSubscriptionID = subscription.subscriptionID
                     }
                     
                     completion?(error)
@@ -86,7 +86,7 @@ import CloudKit
             return
         }
         
-        database.fetchAllSubscriptions { (subscriptions, error) in
+        database.fetchAllSubscriptions { [weak self] (subscriptions, error) in
             guard error == nil else {
                 completion?(error)
                 return
@@ -98,7 +98,7 @@ import CloudKit
             }
             if let subscription = existingSubscription {
                 // Found existing subscription
-                self.storeSubscriptionID(subscription.subscriptionID, for: zoneID)
+                self?.storeSubscriptionID(subscription.subscriptionID, for: zoneID)
                 completion?(nil)
             } else {
                 // Create new one
@@ -107,11 +107,11 @@ import CloudKit
                 notificationInfo.shouldSendContentAvailable = true
                 subscription.notificationInfo = notificationInfo
                 
-                self.database.save(subscription: subscription, completionHandler: { (subscription, error) in
+                self?.database.save(subscription: subscription, completionHandler: { [weak self] (subscription, error) in
                     if error == nil,
                         let subscription = subscription {
                         
-                        self.storeSubscriptionID(subscription.subscriptionID, for: zoneID)
+                        self?.storeSubscriptionID(subscription.subscriptionID, for: zoneID)
                     }
                     
                     completion?(error)
@@ -136,7 +136,7 @@ import CloudKit
             self.cancelSubscription(identifier: subscriptionID, completion: completion)
         } else {
             // There might be an existing subscription in the server
-            database.fetchAllSubscriptions { (subscriptions, error) in
+            database.fetchAllSubscriptions { [weak self] (subscriptions, error) in
                 guard error == nil else {
                     completion?(error)
                     return
@@ -148,7 +148,7 @@ import CloudKit
                 
                 if let subscriptionID = existingSubscriptionIdentifier?.subscriptionID {
                     
-                    self.cancelSubscription(identifier: subscriptionID, completion: completion)
+                    self?.cancelSubscription(identifier: subscriptionID, completion: completion)
                 } else {
                     // No subscription to cancel
                     completion?(nil)
@@ -168,7 +168,7 @@ import CloudKit
             self.cancelSubscription(identifier: subscriptionID, completion: completion)
         } else {
             // There might be an existing subscription in the server
-            database.fetchAllSubscriptions { (subscriptions, error) in
+            database.fetchAllSubscriptions { [weak self] (subscriptions, error) in
                 guard error == nil else {
                     completion?(error)
                     return
@@ -181,7 +181,7 @@ import CloudKit
                 
                 if let subscriptionID = existingSubscriptionIdentifier?.subscriptionID {
                     
-                    self.cancelSubscription(identifier: subscriptionID, completion: completion)
+                    self?.cancelSubscription(identifier: subscriptionID, completion: completion)
                 } else {
                     // No subscription to cancel
                     completion?(nil)
@@ -192,9 +192,9 @@ import CloudKit
     
     fileprivate func cancelSubscription(identifier: String, completion: ((Error?)->())?) {
         
-        database.delete(withSubscriptionID: identifier) { (subscriptionID, error) in
+        database.delete(withSubscriptionID: identifier) { [weak self] (subscriptionID, error) in
             if subscriptionID == nil {
-                self.clearSubscriptionID(identifier)
+                self?.clearSubscriptionID(identifier)
             }
             completion?(error)
         }

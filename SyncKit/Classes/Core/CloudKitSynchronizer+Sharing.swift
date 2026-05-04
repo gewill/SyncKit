@@ -11,12 +11,7 @@ import CloudKit
 @objc public extension CloudKitSynchronizer {
     
     fileprivate func modelAdapter(for object: AnyObject) -> ModelAdapter? {
-        for modelAdapter in modelAdapters {
-            if modelAdapter.record(for: object) != nil {
-                return modelAdapter
-            }
-        }
-        return nil
+        modelAdapters.first { $0.record(for: object) != nil }
     }
     
     fileprivate func modelAdapter(forRecordZoneID zoneID: CKRecordZone.ID) -> ModelAdapter? {
@@ -73,15 +68,17 @@ import CloudKit
             return
         }
 
-        database.fetch(withRecordID: record.recordID) { (updated, fetchError) in
-            if let updated = updated {
-                modelAdapter.prepareToImport()
-                modelAdapter.saveChanges(in: [updated])
-                modelAdapter.persistImportedChanges { (persistError) in
-                    modelAdapter.didFinishImport(with: persistError)
+        database.fetch(withRecordID: record.recordID) { [weak self] (updated, fetchError) in
+            self?.dispatchQueue.async {
+                if let updated = updated {
+                    modelAdapter.prepareToImport()
+                    modelAdapter.saveChanges(in: [updated])
+                    modelAdapter.persistImportedChanges { (persistError) in
+                        modelAdapter.didFinishImport(with: persistError)
+                    }
+                } else if let fetchError = fetchError {
+                    debugPrint("CloudKitSynchronizer >> Error fetching record after share removal: \(fetchError)")
                 }
-            } else if let fetchError = fetchError {
-                debugPrint("CloudKitSynchronizer >> Error fetching record after share removal: \(fetchError)")
             }
         }
     }
@@ -123,8 +120,9 @@ import CloudKit
         
         addMetadata(to: [record, share])
         
-        let operation = ModifyRecordsOperation(database: database, records: [record, share], recordIDsToDelete: nil) { (savedRecords, deleted, conflicted, operationError) in
-            self.dispatchQueue.async {
+        let operation = ModifyRecordsOperation(database: database, records: [record, share], recordIDsToDelete: nil) { [weak self] (savedRecords, deleted, conflicted, operationError) in
+            self?.dispatchQueue.async {
+                guard let self = self else { return }
                 
                 let uploadedShare = savedRecords?.first { $0 is CKShare} as? CKShare
                 
@@ -207,9 +205,10 @@ import CloudKit
         syncing = true
         
         let operation = CKModifyRecordsOperation(recordsToSave: [record], recordIDsToDelete: [share.recordID])
-        operation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, operationError in
+        operation.modifyRecordsCompletionBlock = { [weak self] savedRecords, deletedRecordIDs, operationError in
             
-            self.dispatchQueue.async {
+            self?.dispatchQueue.async {
+                guard let self = self else { return }
                 
                 if let savedRecords = savedRecords,
                     operationError == nil {
@@ -324,8 +323,9 @@ import CloudKit
 
         addMetadata(to: [share])
 
-        let operation = ModifyRecordsOperation(database: database, records: [share], recordIDsToDelete: nil) { (savedRecords, deleted, conflicted, operationError) in
-            self.dispatchQueue.async {
+        let operation = ModifyRecordsOperation(database: database, records: [share], recordIDsToDelete: nil) { [weak self] (savedRecords, deleted, conflicted, operationError) in
+            self?.dispatchQueue.async {
+                guard let self = self else { return }
                 
                 if operationError == nil,
                    let share = savedRecords?.first(where: { $0 is CKShare}) as? CKShare {
@@ -378,9 +378,10 @@ import CloudKit
         syncing = true
         
         let operation = CKModifyRecordsOperation(recordsToSave: [], recordIDsToDelete: [share.recordID])
-        operation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, operationError in
+        operation.modifyRecordsCompletionBlock = { [weak self] savedRecords, deletedRecordIDs, operationError in
             
-            self.dispatchQueue.async {
+            self?.dispatchQueue.async {
+                guard let self = self else { return }
                 
                 if operationError == nil {
 
@@ -435,17 +436,17 @@ import CloudKit
             Array(records[$0..<Swift.min($0 + batchSize, records.count)])
         }
         
-        let finalBlock: ((Error?) -> ()) = { error in
+        let finalBlock: ((Error?) -> ()) = { [weak self] error in
             DispatchQueue.main.async {
-                self.syncing = false
+                self?.syncing = false
                 completion(error)
             }
         }
         
         sequential(objects: chunks,
-                   closure: { (records, uploadCompletion) in
+                   closure: { [weak self] (records, uploadCompletion) in
                     let operation = CKModifyRecordsOperation(recordsToSave: records, recordIDsToDelete: nil)
-                    operation.modifyRecordsCompletionBlock = { savedRecords, deletedRecordIDs, operationError in
+                    operation.modifyRecordsCompletionBlock = { [weak self] savedRecords, deletedRecordIDs, operationError in
                         
                         if operationError == nil,
                             let savedRecords = savedRecords {
@@ -453,15 +454,16 @@ import CloudKit
                         }
                         
                         if let error = operationError {
-                            if self.isLimitExceededError(error as NSError) {
+                            if let self = self,
+                               self.isLimitExceededError(error as NSError) {
                                 self.batchSize = max(1, self.batchSize / 2)
                             }
                         }
                         
                         uploadCompletion(operationError)
                     }
-                    self.currentOperation = operation
-                    self.database.add(operation)
+                    self?.currentOperation = operation
+                    self?.database.add(operation)
         },
                    final: finalBlock)
     }

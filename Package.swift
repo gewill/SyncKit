@@ -21,7 +21,11 @@ let package = Package(
             dependencies: [
                 .product(name: "RealmSwift", package: "realm-swift")
             ],
-            path: "SyncKit/Classes"
+            path: "SyncKit/Classes",
+            exclude: [
+                "Core/GEMINI.md",
+                "RealmSwift/GEMINI.md"
+            ]
         )
     ],
     swiftLanguageVersions: [.v5]
