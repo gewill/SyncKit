@@ -1,7 +1,5 @@
 # SyncKit
 
-[![License](https://img.shields.io/cocoapods/l/SyncKit.svg?style=flat)](http://cocoapods.org/pods/SyncKit)
-
 SyncKit automates the process of synchronizing RealmSwift models using CloudKit.
 
 SyncKit uses introspection to work with any model. It sits next to your Realm stack, making it easy to add synchronization to existing apps.
