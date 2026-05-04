@@ -158,9 +158,9 @@ public class CloudKitSynchronizer: NSObject {
 
     /// Default number of records to send in an upload operation.
     @objc public static var defaultBatchSize = 200
-    static let deviceUUIDKey = "SKCloudKitDeviceUUIDKey"
-    static let modelCompatibilityVersionKey = "SKCloudKitModelCompatibilityVersionKey"
-    @objc public static let entityVersionKey = "SKCloudKitEntityVersionKey"
+    static let deviceUUIDKey = "QSCloudKitDeviceUUIDKey"
+    static let modelCompatibilityVersionKey = "QSCloudKitModelCompatibilityVersionKey"
+    @objc public static let entityVersionKey = "QSCloudKitEntityVersionKey"
     
     /// Initializes a newly allocated synchronizer.
     /// - Parameters:

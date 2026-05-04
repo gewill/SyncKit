@@ -8,10 +8,10 @@
 import Foundation
 import CloudKit
 
-private let customZoneName = "SKCloudKitCustomZoneName"
-private let storedDeviceUUIDKey = "SKCloudKitStoredDeviceUUIDKey"
-private let subscriptionIdentifierKey = "SKSubscriptionIdentifierKey"
-private let databaseServerChangeTokenKey = "SKDatabaseServerChangeTokenKey"
+private let customZoneName = "QSCloudKitCustomZoneName"
+private let storedDeviceUUIDKey = "QSCloudKitStoredDeviceUUIDKey"
+private let subscriptionIdentifierKey = "QSSubscriptionIdentifierKey"
+private let databaseServerChangeTokenKey = "QSDatabaseServerChangeTokenKey"
 
 extension CloudKitSynchronizer {
     

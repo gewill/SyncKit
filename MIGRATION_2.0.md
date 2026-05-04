@@ -13,43 +13,26 @@ SyncKit no longer supports Core Data or the legacy Objective-C Realm (RLMObject)
 
 ## 2. API Renaming (SK Prefix)
 
-To align with modern naming conventions and avoid confusion with other libraries, internal and public constants have been renamed from the legacy `QS` prefix to `SK`.
+To align with modern Swift naming conventions, public classes and protocol methods have been updated. However, **internal storage keys and CloudKit metadata keys have been reverted to the legacy `QS` prefix to ensure 100% data continuity.**
 
-### Public Constant Mappings
+### Metadata Keys (Compatibility Preserved)
 
-| Old Name | New Name |
+The following keys **remain unchanged** in their literal string values. This ensures that SyncKit 2.0 can read metadata from records created by version 1.0 and avoids a "Full Sync" or the creation of new zones.
+
+| Variable Name | String Value (Legacy) |
 |---|---|
-| `QSCloudKitDeviceUUIDKey` | `SKCloudKitDeviceUUIDKey` |
-| `QSCloudKitModelCompatibilityVersionKey` | `SKCloudKitModelCompatibilityVersionKey` |
-| `QSCloudKitEntityVersionKey` | `SKCloudKitEntityVersionKey` |
-| `QSSynchronizerWillSynchronizeNotification` | `SKCloudKitSynchronizerWillSynchronizeNotification` |
+| `CloudKitSynchronizer.deviceUUIDKey` | `QSCloudKitDeviceUUIDKey` |
+| `CloudKitSynchronizer.modelCompatibilityVersionKey` | `QSCloudKitModelCompatibilityVersionKey` |
+| `CloudKitSynchronizer.entityVersionKey` | `QSCloudKitEntityVersionKey` |
 
-### Internal Key Changes (Critical for Continuity)
+### Internal Key Continuity
 
-SyncKit 2.0 has updated several internal keys used for storing metadata in `UserDefaults` and identifying the default CloudKit zone. **If you are migrating an existing app, you must address these to avoid losing sync state or creating a new empty zone.**
+SyncKit 2.0 uses the same internal keys as 1.0 for identifying the default record zone and storing local state in `UserDefaults`.
 
-| Description | 1.0 Value (Internal) | 2.0 Value (Internal) |
-|---|---|---|
-| Default Zone Name | `QSCloudKitCustomZoneName` | `SKCloudKitCustomZoneName` |
-| Device UUID Store Key | `QSCloudKitStoredDeviceUUIDKey` | `SKCloudKitStoredDeviceUUIDKey` |
-| Subscription Store Key | `QSSubscriptionIdentifierKey` | `SKSubscriptionIdentifierKey` |
-| Server Token Store Key | `QSDatabaseServerChangeTokenKey` | `SKDatabaseServerChangeTokenKey` |
+- **Default Zone Name**: `QSCloudKitCustomZoneName`
+- **Server Token Key**: `QSDatabaseServerChangeTokenKey`
 
-#### Maintaining Data Continuity
-If you want to continue using the same data in CloudKit from version 1.0, you **must** explicitly set the `zoneID` to use the old name:
-
-```swift
-let oldZoneID = CKRecordZone.ID(zoneName: "QSCloudKitCustomZoneName", ownerName: CKCurrentUserDefaultName)
-
-let adapterProvider = DefaultRealmSwiftAdapterProvider(
-    targetConfiguration: targetConfig,
-    zoneID: oldZoneID
-)
-```
-
-If you do not specify the zone name, SyncKit 2.0 will use `SKCloudKitCustomZoneName`, which will result in a new, empty zone being created on the server.
-
-Additionally, because the `Server Token Store Key` has changed, the first sync after upgrading to 2.0 will perform a **Full Sync** (downloading all changes from the server). This is expected and ensures that your new `persistenceRealm` is correctly populated with all required metadata.
+**Migration Result**: Upgrading to SyncKit 2.0 is now a **seamless process**. Your app will automatically find the existing CloudKit zone and continue syncing from the last stored token without requiring a full re-download.
 
 ## 3. Class and Protocol Changes
 
