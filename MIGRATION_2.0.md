@@ -15,11 +15,41 @@ SyncKit no longer supports Core Data or the legacy Objective-C Realm (RLMObject)
 
 To align with modern naming conventions and avoid confusion with other libraries, internal and public constants have been renamed from the legacy `QS` prefix to `SK`.
 
+### Public Constant Mappings
+
 | Old Name | New Name |
 |---|---|
 | `QSCloudKitDeviceUUIDKey` | `SKCloudKitDeviceUUIDKey` |
 | `QSCloudKitModelCompatibilityVersionKey` | `SKCloudKitModelCompatibilityVersionKey` |
+| `QSCloudKitEntityVersionKey` | `SKCloudKitEntityVersionKey` |
 | `QSSynchronizerWillSynchronizeNotification` | `SKCloudKitSynchronizerWillSynchronizeNotification` |
+
+### Internal Key Changes (Critical for Continuity)
+
+SyncKit 2.0 has updated several internal keys used for storing metadata in `UserDefaults` and identifying the default CloudKit zone. **If you are migrating an existing app, you must address these to avoid losing sync state or creating a new empty zone.**
+
+| Description | 1.0 Value (Internal) | 2.0 Value (Internal) |
+|---|---|---|
+| Default Zone Name | `QSCloudKitCustomZoneName` | `SKCloudKitCustomZoneName` |
+| Device UUID Store Key | `QSCloudKitStoredDeviceUUIDKey` | `SKCloudKitStoredDeviceUUIDKey` |
+| Subscription Store Key | `QSSubscriptionIdentifierKey` | `SKSubscriptionIdentifierKey` |
+| Server Token Store Key | `QSDatabaseServerChangeTokenKey` | `SKDatabaseServerChangeTokenKey` |
+
+#### Maintaining Data Continuity
+If you want to continue using the same data in CloudKit from version 1.0, you **must** explicitly set the `zoneID` to use the old name:
+
+```swift
+let oldZoneID = CKRecordZone.ID(zoneName: "QSCloudKitCustomZoneName", ownerName: CKCurrentUserDefaultName)
+
+let adapterProvider = DefaultRealmSwiftAdapterProvider(
+    targetConfiguration: targetConfig,
+    zoneID: oldZoneID
+)
+```
+
+If you do not specify the zone name, SyncKit 2.0 will use `SKCloudKitCustomZoneName`, which will result in a new, empty zone being created on the server.
+
+Additionally, because the `Server Token Store Key` has changed, the first sync after upgrading to 2.0 will perform a **Full Sync** (downloading all changes from the server). This is expected and ensures that your new `persistenceRealm` is correctly populated with all required metadata.
 
 ## 3. Class and Protocol Changes
 
