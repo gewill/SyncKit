@@ -1,81 +1,113 @@
 # Advanced Conflict Resolution in SyncKit
 
-SyncKit 2.0.0 introduces sophisticated conflict resolution mechanisms to ensure data integrity across multiple devices. This document explains the three pillars of our conflict resolution strategy: **Version Tracking**, **Delta Counters**, and **Semantic List Merging**.
+SyncKit 2.0.0 introduces sophisticated conflict resolution mechanisms to ensure data integrity across multiple devices. This document provides practical, copy-paste friendly examples for the three pillars of our conflict resolution strategy: **Version Tracking**, **Delta Counters**, and **Semantic List Merging**, as well as custom merge policies.
 
-## 1. Version Tracking
+## 1. Version Tracking (Smart LWW)
 
 SyncKit uses a monotonic version counter to distinguish between **concurrent modifications** and **base-revision updates**.
 
 ### How it works:
 - Every `SyncedEntity` maintains a `version` integer.
 - **Local Changes**: Whenever an object is modified locally, its `version` increments by 1.
-- **CloudKit Sync**: This version is stored in the CloudKit record under the key `SKCloudKitEntityVersionKey`.
 - **Merge Logic**:
-    - **Server Version > Local Version**: The client recognizes it is working on an outdated revision. Server values will override local changes for conflicted fields (Last-Write-Wins based on history).
+    - **Server Version > Local Version**: The client recognizes it is working on an outdated revision. Server values will override local changes for conflicted fields (Base-revision update).
     - **Server Version == Local Version**: A potential concurrent conflict. SyncKit falls back to timestamp-based resolution (comparing the local `updated` date with the server's `modificationDate`).
-
-*Note: This is a monotonic versioning system, not a true multi-device Vector Clock. It provides a strong heuristic for causality in most common scenarios.*
 
 ## 2. Delta Counters
 
-Standard Last-Write-Wins (LWW) is often destructive for numeric values like scores, balances, or view counts. SyncKit supports **Delta Merging** for these properties.
+Standard Last-Write-Wins (LWW) is often destructive for numeric values like scores or view counts. SyncKit supports **Delta Merging** for these properties.
 
-### Integration:
-Implement the `RealmSwiftAdapterCounterProvider` in your model:
+### Implementation:
+Implement the `RealmSwiftAdapterCounterProvider` in your model or a separate provider object:
 
 ```swift
+class MyObject: Object {
+    @Persisted(primaryKey: true) var id: String = ""
+    @Persisted var points: Int = 0
+}
+
+// 1. Conform your object or a delegate to the provider protocol
 extension MyObject: RealmSwiftAdapterCounterProvider {
-    static func counterProperties() -> [String] {
-        return ["points", "tapCount"]
+    func isCounter(property: String, in entityType: String) -> Bool {
+        return entityType == "MyObject" && property == "points"
     }
 }
+
+// 2. Assign the provider to your adapter
+let adapter = adapterProvider.adapter(for: zoneID) as! RealmSwiftAdapter
+adapter.counterProvider = someObject // or your model instance
 ```
 
 ### How it works:
-Instead of overwriting the value, SyncKit calculates the local delta since the last sync. When a conflict occurs on a counter property, SyncKit performs:
+Instead of overwriting the value, SyncKit calculates the local delta since the last sync. When a conflict occurs:
 `New Value = Server Value + Local Delta`
-
-This ensures that no "taps" or "points" are lost, even if multiple devices update the counter simultaneously.
 
 ## 3. Semantic List Merging
 
-For Realm `List` properties (to-many relationships or primitive arrays), SyncKit treats the collection as a set to prevent data loss.
+For Realm `List` properties (to-many relationships or primitive arrays), SyncKit treats the collection as a set to prevent data loss during concurrent updates.
+
+### Implementation:
+No extra code is needed! Any Realm `List` property is automatically handled with semantic merging.
+
+```swift
+class Company: Object {
+    @Persisted(primaryKey: true) var name: String = ""
+    @Persisted var employees: List<Employee>
+}
+
+// If Device A adds "Alice" and Device B adds "Bob" concurrently:
+// Result: employees = ["Alice", "Bob"] (both preserved)
+```
 
 ### Logic:
 `Resulting List = (Server List ∪ Local Additions) - Local Deletions`
 
-### Why this matters:
-If Device A adds "Item 1" to a list and Device B adds "Item 2" simultaneously, a standard LWW approach would result in only one of the items existing. With SyncKit's semantic merging, **both** items will be preserved in the final list.
-
-*Note: SyncKit's semantic merging operates on set semantics and does not guarantee preserving custom user sorting across devices. If your application requires strictly synchronized ordering, we recommend implementing a sorting property (e.g., an `order` double) and using that to sort the list in your UI.*
-
 ---
 
-## Choosing a Merge Policy
+## 4. Custom Merge Policies
 
-You can configure the behavior of the `CloudKitSynchronizer` via the `ModelAdapter`:
+If the default Smart LWW logic isn't sufficient, you can implement a custom merge policy.
 
-- `.server`: Server always wins. Local changes are discarded if a conflict occurs.
-- `.client` (Default): Uses the Smart LWW logic (Version Tracking + Timestamps) described above.
-- `.custom`: Allows you to provide a delegate to handle conflicts manually on a per-field basis.
-
-## 4. Tombstone Optimization (Delete-Modify Conflicts)
-
-SyncKit 2.0.0 improves handling of conflicts where one user deletes an object while another modifies it.
-
-### Resurrection (Server Modify vs Local Delete)
-If an object is marked for deletion locally (`.deleted` state) but a newer modification arrives from the server (based on `modificationDate` or `version`), SyncKit will **resurrect** the object. It recreates the object in the target Realm and applies the server changes, ensuring that a "late" modification from another user is not lost just because one user chose to delete their local copy.
-
-### Local Modify Conflict (Server Delete vs Local Modify)
-If a deletion instruction arrives from the server for an object that has pending local changes (`.changed` or `.new` state), SyncKit provides a delegate callback to resolve the conflict:
+### Implementation:
 
 ```swift
-func realmSwiftAdapter(_ adapter: RealmSwiftAdapter, shouldIgnoreServerDeletionOf object: Object, with recordID: CKRecord.ID) -> Bool
+class MySyncDelegate: RealmSwiftAdapterDelegate {
+    func realmSwiftAdapter(_ adapter: RealmSwiftAdapter, gotChanges changes: [String: Any], object: Object) {
+        guard let myObject = object as? MyObject else { return }
+        
+        // Manual merging logic
+        if let serverPoints = changes["points"] as? Int {
+            // e.g., only update if server points are significantly higher
+            if serverPoints > myObject.points + 100 {
+                myObject.points = serverPoints
+            }
+        }
+    }
+    
+    // Handle Delete-Modify Conflicts
+    func realmSwiftAdapter(_ adapter: RealmSwiftAdapter, shouldIgnoreServerDeletionOf object: Object, with recordID: CKRecord.ID) -> Bool {
+        // Return true (Default) to ignore server deletion and re-upload the local modified version
+        // Return false to accept the server deletion and delete the local modified object
+        return true 
+    }
+}
+
+// Configure the adapter
+let adapter = adapterProvider.adapter(for: zoneID) as! RealmSwiftAdapter
+adapter.mergePolicy = .custom
+adapter.delegate = mySyncDelegate
 ```
 
-- **Return `true` (Default)**: Ignore the deletion. The local version "wins" and will be re-uploaded.
-- **Return `false`**: Apply the deletion. Local changes will be lost.
+## 5. Tombstone Optimization (Delete-Modify Conflicts)
 
-This allows the application to implement business logic (e.g., "Admin deletions always win") instead of silently resurrecting data.
+SyncKit 2.0.0 improves handling of cases where one user deletes an object while another modifies it.
+
+### Resurrection (Server Modify vs Local Delete)
+If an object is marked for deletion locally but a newer modification arrives from the server (based on version or date), SyncKit will **resurrect** the object automatically.
+
+### Local Modify vs Server Delete
+If a deletion instruction arrives from the server for an object that has pending local changes, SyncKit uses the delegate method shown above:
+- **Return `true`**: Object "survives" the deletion and will be re-uploaded.
+- **Return `false`**: Object is deleted locally, and local changes are discarded.
 
 These mechanisms work together to ensure that SyncKit prioritizes data preservation while allowing application-level control.
