@@ -26,6 +26,11 @@ let package = Package(
                 "Core/GEMINI.md",
                 "RealmSwift/GEMINI.md"
             ]
+        ),
+        .testTarget(
+            name: "SyncKitTests",
+            dependencies: ["SyncKit"],
+            path: "Tests/SyncKitTests"
         )
     ],
     swiftLanguageVersions: [.v5]
