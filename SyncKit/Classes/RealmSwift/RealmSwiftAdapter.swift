@@ -1083,8 +1083,8 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                             let primaryKey = objectClass.primaryKey()!
                             let stringIdentifier = getStringIdentifier(for: object, usingPrimaryKey: primaryKey)
                             if let token = objectNotificationTokens[stringIdentifier] {
-                                DispatchQueue.main.async {
-                                    self.objectNotificationTokens.removeValue(forKey: stringIdentifier)
+                                DispatchQueue.main.async { [weak self] in
+                                    self?.objectNotificationTokens.removeValue(forKey: stringIdentifier)
                                     token.invalidate()
                                 }
                             }

@@ -129,7 +129,8 @@ public class MultiRealmResultsController<T: Object> {
     
     @objc func didChangeAdapters(notification: Notification) {
         
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
             self.updateResults()
             self.didChangeRealms?(self)
         }
