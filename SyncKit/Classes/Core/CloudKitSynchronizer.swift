@@ -144,6 +144,7 @@ public class CloudKitSynchronizer: NSObject {
     @objc public var delegate: CloudKitSynchronizerDelegate?
     
     internal let dispatchQueue = DispatchQueue(label: "SKCloudKitSynchronizer")
+    internal let operationQueue = OperationQueue()
     internal var modelAdapterDictionary = [CKRecordZone.ID: ModelAdapter]()
     internal var serverChangeToken: CKServerChangeToken?
     internal var activeZoneTokens = [CKRecordZone.ID: CKServerChangeToken]()

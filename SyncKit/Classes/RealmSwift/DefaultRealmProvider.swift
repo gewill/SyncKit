@@ -56,7 +56,7 @@ public class DefaultRealmProvider: NSObject, AdapterProvider {
         if let suiteName = suiteName {
             return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: suiteName)!.path
         } else {
-            return applicationDocumentsDirectory()
+            return applicationDocumentsDirectory() ?? ""
         }
     }
     

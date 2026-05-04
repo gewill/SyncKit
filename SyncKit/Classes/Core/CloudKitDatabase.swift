@@ -39,19 +39,19 @@ import CloudKit
     func delete(withSubscriptionID subscriptionID: CKSubscription.ID, completionHandler: @escaping (String?, Error?) -> Void)
 
     @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
-    @objc(saveZone:) func save(zone: CKRecordZone) async throws -> CKRecordZone
+    @objc(saveZone:completionHandler:) func save(zone: CKRecordZone) async throws -> CKRecordZone
     @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
-    @objc(fetchRecordZoneWithID:) func fetch(withRecordZoneID zoneID: CKRecordZone.ID) async throws -> CKRecordZone
+    @objc(fetchRecordZoneWithID:completionHandler:) func fetch(withRecordZoneID zoneID: CKRecordZone.ID) async throws -> CKRecordZone
     @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
-    @objc(fetchRecordWithID:) func fetch(withRecordID recordID: CKRecord.ID) async throws -> CKRecord
+    @objc(fetchRecordWithID:completionHandler:) func fetch(withRecordID recordID: CKRecord.ID) async throws -> CKRecord
     @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
-    @objc(deleteRecordZoneWithID:) func delete(withRecordZoneID zoneID: CKRecordZone.ID) async throws -> CKRecordZone.ID
+    @objc(deleteRecordZoneWithID:completionHandler:) func delete(withRecordZoneID zoneID: CKRecordZone.ID) async throws -> CKRecordZone.ID
     @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
     @objc(fetchAllSubscriptionsWithCompletion:) func fetchAllSubscriptions() async throws -> [CKSubscription]
     @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
-    @objc(saveSubscription:) func save(subscription: CKSubscription) async throws -> CKSubscription
+    @objc(saveSubscription:completionHandler:) func save(subscription: CKSubscription) async throws -> CKSubscription
     @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
-    @objc(deleteSubscriptionWithID:) func delete(withSubscriptionID subscriptionID: CKSubscription.ID) async throws -> String
+    @objc(deleteSubscriptionWithID:completionHandler:) func delete(withSubscriptionID subscriptionID: CKSubscription.ID) async throws -> String
 }
 
 @objc public class DefaultCloudKitDatabaseAdapter: NSObject, CloudKitDatabaseAdapter {
@@ -115,22 +115,22 @@ import CloudKit
     }
 
     @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
-    @objc(saveZone:) public func save(zone: CKRecordZone) async throws -> CKRecordZone {
+    @objc(saveZone:completionHandler:) public func save(zone: CKRecordZone) async throws -> CKRecordZone {
         try await database.save(zone)
     }
 
     @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
-    @objc(fetchRecordZoneWithID:) public func fetch(withRecordZoneID zoneID: CKRecordZone.ID) async throws -> CKRecordZone {
+    @objc(fetchRecordZoneWithID:completionHandler:) public func fetch(withRecordZoneID zoneID: CKRecordZone.ID) async throws -> CKRecordZone {
         try await database.recordZone(for: zoneID)
     }
 
     @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
-    @objc(fetchRecordWithID:) public func fetch(withRecordID recordID: CKRecord.ID) async throws -> CKRecord {
+    @objc(fetchRecordWithID:completionHandler:) public func fetch(withRecordID recordID: CKRecord.ID) async throws -> CKRecord {
         try await database.record(for: recordID)
     }
 
     @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
-    @objc(deleteRecordZoneWithID:) public func delete(withRecordZoneID zoneID: CKRecordZone.ID) async throws -> CKRecordZone.ID {
+    @objc(deleteRecordZoneWithID:completionHandler:) public func delete(withRecordZoneID zoneID: CKRecordZone.ID) async throws -> CKRecordZone.ID {
         try await database.deleteRecordZone(withID: zoneID)
     }
 
@@ -140,12 +140,12 @@ import CloudKit
     }
 
     @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
-    @objc(saveSubscription:) public func save(subscription: CKSubscription) async throws -> CKSubscription {
+    @objc(saveSubscription:completionHandler:) public func save(subscription: CKSubscription) async throws -> CKSubscription {
         try await database.save(subscription)
     }
 
     @available(iOS 15.0, macOS 12.0, watchOS 8.0, tvOS 15.0, *)
-    @objc(deleteSubscriptionWithID:) public func delete(withSubscriptionID subscriptionID: CKSubscription.ID) async throws -> String {
+    @objc(deleteSubscriptionWithID:completionHandler:) public func delete(withSubscriptionID subscriptionID: CKSubscription.ID) async throws -> String {
         try await database.deleteSubscription(withID: subscriptionID)
     }
 }

@@ -66,14 +66,14 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
         return applicationBackupRealmPath(suiteName: appGroup).appending(realmFileName())
     }
     
-    fileprivate static func applicationBackupRealmPath(suiteName: String?) -> String! {
+    fileprivate static func applicationBackupRealmPath(suiteName: String?) -> String {
         let rootDirectory: String?
         if let suiteName = suiteName {
             rootDirectory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: suiteName)?.path
         } else {
             rootDirectory = applicationDocumentsDirectory()
         }
-        return rootDirectory?.appending("Realm")
+        return (rootDirectory ?? "").appending("Realm")
     }
     
     fileprivate static func applicationDocumentsDirectory() -> String? {
