@@ -6,15 +6,36 @@
 [![License](https://img.shields.io/cocoapods/l/SyncKit.svg?style=flat)](http://cocoapods.org/pods/SyncKit)
 [![Platform](https://img.shields.io/cocoapods/p/SyncKit.svg?style=flat)](http://cocoapods.org/pods/SyncKit)
 
-SyncKit automates the process of synchronizing Core Data or Realm models using CloudKit.
+SyncKit automates the process of synchronizing RealmSwift models using CloudKit.
 
-SyncKit uses introspection to work with any model. It sits next to your Core Data or Realm stack, making it easy to add synchronization to existing apps.
+SyncKit uses introspection to work with any model. It sits next to your Realm stack, making it easy to add synchronization to existing apps.
 
-For installation instructions and more information check the [Docs](https://mentrena.github.io/SyncKit)
+## Features
 
-## Author
+- [x] CloudKit synchronization for RealmSwift.
+- [x] Automatic conflict resolution.
+- [x] Support for custom record zones.
+- [x] Support for sharing records.
 
-Manuel Entrena, manuel@mentrena.com
+## Installation
+
+### Swift Package Manager
+
+Add SyncKit to your `Package.swift`:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/mentrena/SyncKit", from: "2.0.0")
+]
+```
+
+### CocoaPods
+
+Add SyncKit to your `Podfile`:
+
+```ruby
+pod 'SyncKit'
+```
 
 ## License
 

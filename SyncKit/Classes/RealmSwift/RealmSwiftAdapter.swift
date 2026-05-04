@@ -35,7 +35,7 @@ public protocol RealmSwiftAdapterDelegate: AnyObject {
      *  Asks the delegate to resolve conflicts for a managed object when using a custom mergePolicy.
      *  The delegate is expected to examine the change dictionary and optionally apply any of those changes to the managed object.
      *
-     *  @param adapter    The `QSRealmSwiftAdapter` that is providing the changes.
+     *  @param adapter    The `RealmSwiftAdapter` that is providing the changes.
      *  @param changeDictionary Dictionary containing keys and values with changes for the managed object. Values can be [NSNull null] to represent a nil value.
      *  @param object           The `RLMObject` that has changed on iCloud.
      */
@@ -765,59 +765,44 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
     }
     
     func encodedRecord(_ record: CKRecord, onlySystemFields: Bool) -> Data {
-        
-        let data = NSMutableData()
-        let archiver = NSKeyedArchiver(forWritingWith: data)
-        if onlySystemFields {
-            record.encodeSystemFields(with: archiver)
-        } else {
-            record.encode(with: archiver)
-        }
-        archiver.finishEncoding()
-        return data as Data
+        return Coder.shared.encode(record, onlySystemFields: onlySystemFields)
     }
     
     func getRecord(for syncedEntity: SyncedEntity) -> CKRecord? {
-        
-        var record: CKRecord?
-        if let recordData = syncedEntity.record?.encodedRecord {
-            let unarchiver = NSKeyedUnarchiver(forReadingWith: recordData)
-            record = CKRecord(coder: unarchiver)
-            unarchiver.finishDecoding()
-        }
-        return record
+        guard let recordData = syncedEntity.record?.encodedRecord else { return nil }
+        return Coder.shared.decode(from: recordData)
     }
     
     func save(share: CKShare, forSyncedEntity entity: SyncedEntity, realmProvider: RealmProvider) {
         
-        var qsRecord: Record?
+        var recordEntity: Record?
         if let entityForShare = entity.share {
-            qsRecord = entityForShare.record
+            recordEntity = entityForShare.record
         } else {
             let entityForShare = createSyncedEntity(for: share, realmProvider: realmProvider)
-            qsRecord = Record()
-            realmProvider.persistenceRealm.add(qsRecord!)
-            entityForShare.record = qsRecord
+            recordEntity = Record()
+            realmProvider.persistenceRealm.add(recordEntity!)
+            entityForShare.record = recordEntity
             entity.share = entityForShare
         }
         
-        qsRecord?.encodedRecord = encodedRecord(share, onlySystemFields: false)
+        recordEntity?.encodedRecord = encodedRecord(share, onlySystemFields: false)
     }
     
     @available(iOS 15, OSX 12, watchOS 8.0, *)
     func saveShareForRecordZone(share: CKShare, realmProvider: RealmProvider) {
         var entity = syncedEntityForRecordZoneShare(realm: realmProvider.persistenceRealm)
-        var qsRecord: Record!
+        var recordEntity: Record!
         if entity == nil {
             entity = createSyncedEntity(for: share, realmProvider: realmProvider)
-            qsRecord = Record()
-            realmProvider.persistenceRealm.add(qsRecord)
-            entity?.record = qsRecord
+            recordEntity = Record()
+            realmProvider.persistenceRealm.add(recordEntity)
+            entity?.record = recordEntity
         } else {
-            qsRecord = entity?.record
+            recordEntity = entity?.record
         }
         
-        qsRecord.encodedRecord = encodedRecord(share, onlySystemFields: false)
+        recordEntity.encodedRecord = encodedRecord(share, onlySystemFields: false)
     }
     
     func getShare(for entity: SyncedEntity) -> CKShare? {
@@ -1011,14 +996,14 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
         return records
     }
     
-//    - (RLMResults *)childrenOf:(RLMObject *)parent withRelationship:(QSChildRelationship *)relationship
+//    - (RLMResults *)childrenOf:(RLMObject *)parent withRelationship:(ChildRelationship *)relationship
 //    {
 //    Class objectClass = NSClassFromString(relationship.childEntityName);
 //    NSPredicate *predicate = [NSPredicate predicateWithFormat:@"%K == %@", relationship.childParentKey, parent];
 //    return [objectClass objectsInRealm:parent.realm withPredicate:predicate];
 //    }
     
-    // MARK: - QSModelAdapter
+    // MARK: - ModelAdapter
     
     public func prepareToImport() {
         

@@ -81,12 +81,12 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
         return NSSearchPathForDirectoriesInDomains(.libraryDirectory, .userDomainMask, true).last
         #else
         let urls = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-        return urls.last?.appendingPathComponent("com.mentrena.QSCloudKitSynchronizer").path
+        return urls.last?.appendingPathComponent("com.mentrena.SKCloudKitSynchronizer").path
         #endif
     }
     
     fileprivate static func realmFileName() -> String {
-        return "QSSyncStore.realm"
+        return "SyncStore.realm"
     }
     
     fileprivate static func createPersistenceConfiguration(suiteName: String?) -> Realm.Configuration {

@@ -42,13 +42,12 @@ public class DefaultRealmProvider: NSObject, AdapterProvider {
         bringUpDataStacks()
     }
     
-    private class func applicationDocumentsDirectory() -> String {
-        
-        #if os(iOS)
-        return NSSearchPathForDirectoriesInDomains(.libraryDirectory, .userDomainMask, true).last!
+    fileprivate static func applicationDocumentsDirectory() -> String? {
+        #if os(iOS) || os(watchOS) || os(tvOS)
+        return NSSearchPathForDirectoriesInDomains(.libraryDirectory, .userDomainMask, true).last
         #else
         let urls = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-        return urls.last!.appendingPathComponent("com.mentrena.QSCloudKitSynchronizer").path
+        return urls.last!.appendingPathComponent("com.mentrena.SKCloudKitSynchronizer").path
         #endif
     }
     

@@ -5,10 +5,10 @@ project 'SyncKitRealmSwiftExample/SyncKitRealmSwiftExample'
 
 target 'SyncKitRealmSwiftExample' do
 	
-  platform :ios, '10.0'
+  platform :ios, '12.0'
 
-  pod 'RealmSwift'
-  pod 'SyncKit/RealmSwift', :path => '../../'
+  pod 'RealmSwift', '~> 20.0'
+  pod 'SyncKit', :path => '../../'
 
   target 'SyncKitRealmSwiftExampleTests' do
     inherit! :search_paths

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.0
+### Removed
+- Removed support for Core Data and legacy Realm (RLMObject). SyncKit now focuses exclusively on RealmSwift.
+### Changed
+- Refactored project structure for better maintainability.
+- Consolidated core logic into `Core` directory.
+- Modernized code with `async/await` support for synchronization.
+- Updated `Coder` to use modern `NSSecureCoding` APIs.
+- Renamed internal prefixes from `QS` to `SK` for consistency with SyncKit.
+- Updated minimum deployment targets (iOS 12.0+, macOS 10.13+).
+- Simplified Package.swift and Podspec.
+
 ## 0.7.9
 ### Changed
 - Fixes for record reupload, RealmSwift non-optional properties.

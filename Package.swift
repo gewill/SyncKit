@@ -10,38 +10,18 @@ let package = Package(
         .watchOS(.v4)
     ],
     products: [
-        .library(name: "SyncKitCoreData", targets: ["SyncKit/CoreData"]),
-        .library(name: "SyncKitRealm", targets: ["SyncKit/Realm"]),
-        .library(name: "SyncKit_RealmSwift", targets: ["SyncKit/RealmSwift"])
+        .library(name: "SyncKit", targets: ["SyncKit"])
     ],
     dependencies: [
         .package(url: "https://github.com/realm/realm-swift", from: "20.0.0")
     ],
     targets: [
         .target(
-            name: "SyncKit/CoreData",
-            dependencies: [],
-            path: "SyncKit/Classes/CoreData",
-            resources: [
-                .process("QSCloudKitSyncModel.xcdatamodeld")
-            ],
-            swiftSettings: [
-                .define("SPM")
-            ]
-        ),
-         .target(
-            name: "SyncKit/Realm",
-            dependencies: [
-                .product(name: "Realm", package: "realm-swift")
-            ],
-            path: "SyncKit/Classes/Realm"
-        ),
-        .target(
-            name: "SyncKit/RealmSwift",
+            name: "SyncKit",
             dependencies: [
                 .product(name: "RealmSwift", package: "realm-swift")
             ],
-            path: "SyncKit/Classes/RealmSwift"
+            path: "SyncKit/Classes"
         )
     ],
     swiftLanguageVersions: [.v5]

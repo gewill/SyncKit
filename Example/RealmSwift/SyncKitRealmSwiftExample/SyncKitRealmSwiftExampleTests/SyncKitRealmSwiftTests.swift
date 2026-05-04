@@ -1534,14 +1534,14 @@ class SyncKitRealmSwiftTests: XCTestCase, RealmSwiftAdapterDelegate {
         
         let data = try! Data(contentsOf: Bundle(for: SyncKitRealmSwiftTests.self).url(forResource: "serverChangeToken.AQAAAWPa1DUC", withExtension: nil)!)
         let token = NSKeyedUnarchiver.unarchiveObject(with: data) as! CKServerChangeToken
-        UserDefaults.standard.set(data, forKey: "containerQSCloudKitFetchChangesServerTokenKey")
+        UserDefaults.standard.set(data, forKey: "containerSKCloudKitFetchChangesServerTokenKey")
         
         let synchronizer2 = CloudKitSynchronizer.privateSynchronizer(containerName: "container", configuration: realm.configuration)
         let adapterToken = synchronizer2.modelAdapters.first?.serverChangeToken
         
         XCTAssertNotNil(token);
         XCTAssertTrue(adapterToken == token);
-        XCTAssertNil(UserDefaults.standard.object(forKey: "containerQSCloudKitFetchChangesServerTokenKey"))
+        XCTAssertNil(UserDefaults.standard.object(forKey: "containerSKCloudKitFetchChangesServerTokenKey"))
     }
     
     // MARK: - Object created in more than one device
