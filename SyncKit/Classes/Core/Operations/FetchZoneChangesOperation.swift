@@ -64,16 +64,28 @@ class FetchZoneChangesOperation: CloudKitSynchronizerOperation, @unchecked Senda
     func performFetchOperation(with zones: [CKRecordZone.ID]) {
         
         var higherModelVersionFound = false
-        var zoneOptions = [CKRecordZone.ID: CKFetchRecordZoneChangesOperation.ZoneOptions]()
+        let operation: CKFetchRecordZoneChangesOperation
         
-        for zoneID in zones {
-            let options = CKFetchRecordZoneChangesOperation.ZoneOptions()
-            options.previousServerChangeToken = zoneChangeTokens[zoneID]
-            options.desiredKeys = desiredKeys
-            zoneOptions[zoneID] = options
+        if #available(iOS 12.0, macOS 10.14, tvOS 12.0, watchOS 5.0, *) {
+            var configurations = [CKRecordZone.ID: CKFetchRecordZoneChangesOperation.ZoneConfiguration]()
+            for zoneID in zones {
+                let configuration = CKFetchRecordZoneChangesOperation.ZoneConfiguration()
+                configuration.previousServerChangeToken = zoneChangeTokens[zoneID]
+                configuration.desiredKeys = desiredKeys
+                configurations[zoneID] = configuration
+            }
+            operation = CKFetchRecordZoneChangesOperation(recordZoneIDs: zones, configurationsByRecordZoneID: configurations)
+        } else {
+            var zoneOptions = [CKRecordZone.ID: CKFetchRecordZoneChangesOperation.ZoneOptions]()
+            for zoneID in zones {
+                let options = CKFetchRecordZoneChangesOperation.ZoneOptions()
+                options.previousServerChangeToken = zoneChangeTokens[zoneID]
+                options.desiredKeys = desiredKeys
+                zoneOptions[zoneID] = options
+            }
+            operation = CKFetchRecordZoneChangesOperation(recordZoneIDs: zones, optionsByRecordZoneID: zoneOptions)
         }
         
-        let operation = CKFetchRecordZoneChangesOperation(recordZoneIDs: zones, optionsByRecordZoneID: zoneOptions)
         operation.fetchAllChanges = false
         
         operation.recordChangedBlock = { record in

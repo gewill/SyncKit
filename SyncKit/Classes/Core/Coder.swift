@@ -15,11 +15,15 @@ class Coder {
     func data(from object: Any) -> Data? {
         return try? NSKeyedArchiver.archivedData(withRootObject: object, requiringSecureCoding: false)
     }
-    
+
     func object(from data: Data) -> Any? {
-        return try? NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data)
+        guard let unarchiver = try? NSKeyedUnarchiver(forReadingFrom: data) else { return nil }
+        unarchiver.requiresSecureCoding = false
+        let object = unarchiver.decodeObject(forKey: NSKeyedArchiveRootObjectKey)
+        unarchiver.finishDecoding()
+        return object
     }
-    
+
     func encode<T: CKRecord>(_ record: T, onlySystemFields: Bool = false) -> Data {
         let archiver = NSKeyedArchiver(requiringSecureCoding: false)
         if onlySystemFields {
@@ -30,7 +34,7 @@ class Coder {
         archiver.finishEncoding()
         return archiver.encodedData
     }
-    
+
     func decode<T: CKRecord>(from data: Data) -> T? {
         guard let unarchiver = try? NSKeyedUnarchiver(forReadingFrom: data) else { return nil }
         unarchiver.requiresSecureCoding = false

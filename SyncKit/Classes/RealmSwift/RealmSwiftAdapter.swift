@@ -814,7 +814,8 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
     
     func getStoredShare(inShareEntity entity: SyncedEntity) -> CKShare? {
         if let recordData = entity.record?.encodedRecord {
-            let unarchiver = NSKeyedUnarchiver(forReadingWith: recordData)
+            guard let unarchiver = try? NSKeyedUnarchiver(forReadingFrom: recordData) else { return nil }
+            unarchiver.requiresSecureCoding = false
             let share = CKShare(coder: unarchiver)
             unarchiver.finishDecoding()
             return share
@@ -1333,7 +1334,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
         executeOnMainQueue {
             let serverToken = self.realmProvider.persistenceRealm.objects(ServerToken.self).first
             if let tokenData = serverToken?.token {
-                token = NSKeyedUnarchiver.unarchiveObject(with: tokenData) as? CKServerChangeToken
+                token = Coder.shared.object(from: tokenData) as? CKServerChangeToken
             }
         }
         return token
@@ -1354,7 +1355,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             }
             
             if let token = token {
-                serverToken.token = NSKeyedArchiver.archivedData(withRootObject: token)
+                serverToken.token = Coder.shared.data(from: token)
             } else {
                 serverToken.token = nil
             }
