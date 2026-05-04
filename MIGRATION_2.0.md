@@ -9,7 +9,6 @@ SyncKit no longer supports Core Data or the legacy Objective-C Realm (RLMObject)
 
 ### Modern Swift
 - **Swift 5.9+**: SyncKit 2.0 uses modern Swift features.
-- **Concurrency**: Added support for `async/await` in synchronization operations.
 - **Minimum Requirements**: iOS 12.0+, macOS 10.13+, tvOS 12.0+, watchOS 4.0+.
 
 ## 2. API Renaming (SK Prefix)
@@ -41,6 +40,8 @@ let adapter = RealmSwiftAdapter(realm: myRealm, recordZoneID: zoneID)
 
 **After:**
 ```swift
+import SyncKit
+
 let adapterProvider = DefaultRealmSwiftAdapterProvider(
     targetRealmConfiguration: targetConfig,
     persistenceRealmConfiguration: persistenceConfig

@@ -13,7 +13,6 @@ SyncKit is a library for synchronizing RealmSwift data with CloudKit. Following 
 ### General
 - **Language**: Swift 5.9+
 - **Naming**: Avoid the legacy `QS` prefix. Use `SK` for internal keys or notifications where namespacing is required. Public APIs should use clear, idiomatic Swift names.
-- **Concurrency**: Prefer `async/await` for new asynchronous operations. Maintain backward compatibility with completion handlers where appropriate by wrapping them.
 - **Serialization**: Use the `Coder` class for all CloudKit record and metadata serialization. It uses `NSSecureCoding`.
 
 ### Module Specifics
