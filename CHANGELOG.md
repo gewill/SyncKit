@@ -2,7 +2,7 @@
 
 ## 2.1.0
 ### Added
-- Implemented Vector Clocks and version tracking for `SyncedEntity` to improve conflict resolution.
+- Implemented Version Tracking for `SyncedEntity` to improve conflict resolution.
 - Added `version` property to `SyncedEntity` and `entityVersionKey` to CloudKit records for tracking object revisions.
 - Enhanced `.client` merge policy to use version tracking, distinguishing between concurrent modifications and base-revision updates.
 - Optimized Tombstone handling with Resurrection logic and Local Modification Protection.

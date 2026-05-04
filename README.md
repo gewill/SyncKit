@@ -9,7 +9,7 @@ SyncKit uses introspection to work with any model. It sits next to your Realm st
 ## Features
 
 - [x] CloudKit synchronization for RealmSwift.
-- [x] Advanced conflict resolution (Vector Clocks, Delta Counters, Semantic List Merging). See [Conflict Resolution Guide](CONFLICT_RESOLUTION.md).
+- [x] Advanced conflict resolution (Version Tracking, Delta Counters, Semantic List Merging). See [Conflict Resolution Guide](CONFLICT_RESOLUTION.md).
 - [x] Resilient sync with Exponential Backoff and Jitter retries.
 - [x] Support for custom record zones.
 - [x] Support for sharing records.

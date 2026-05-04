@@ -14,3 +14,4 @@ The Core module contains the synchronization engine and CloudKit abstractions.
 - **Storage Agnostic**: The Core module should not depend on RealmSwift. All interactions with the local data store must go through the `ModelAdapter` protocol.
 - **Operations**: New synchronization steps should be implemented as subclasses of `CloudKitSynchronizerOperation`.
 - **Error Handling**: Use `CKError` codes to decide on retry logic or user intervention. Map common sync errors to `CloudKitSynchronizer.SyncError`.
+- **Retries**: Implements Exponential Backoff with Jitter for transient errors (rate limiting, network issues). Follows `CKErrorRetryAfterKey` if provided. Max retries are configured to 5 for transient failures.

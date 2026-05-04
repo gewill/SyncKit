@@ -18,6 +18,7 @@ class SyncedEntity: Object {
     @objc dynamic var updated: Date?
     @objc dynamic var version: Int = 0
     @objc dynamic var record: Record?
+    @objc dynamic var lastSyncedRecord: Record?
     @objc dynamic var share: SyncedEntity?
     
     convenience init(entityType: String, identifier: String, state: Int) {

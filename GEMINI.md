@@ -24,9 +24,17 @@ SyncKit is a library for synchronizing RealmSwift data with CloudKit. Following 
 
 ### Synchronization Lifecycle
 1. **Fetch**: Download changes from CloudKit.
-2. **Merge**: Apply changes to the local Realm store using the `ModelAdapter`.
+2. **Merge**: Apply changes using Advanced Conflict Resolution (Vector Clocks, Semantic Merging, and Tombstone handling).
 3. **Upload**: Identify local changes and upload them to CloudKit.
 4. **Finalize**: Persist server tokens and update local metadata.
+
+## Conflict Resolution
+
+Detailed strategies are documented in [CONFLICT_RESOLUTION.md](./CONFLICT_RESOLUTION.md). Key features:
+- **Version Tracking**: Monotonic versioning for robust LWW.
+- **Delta Counters**: Lossless merging for numeric properties.
+- **Semantic List Merging**: Set-based merging for collections.
+- **Resurrection**: Handles delete-modify conflicts by prioritizing data preservation.
 
 ## Testing Strategy
 

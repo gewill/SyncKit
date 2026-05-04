@@ -42,6 +42,17 @@ public protocol RealmSwiftAdapterDelegate: AnyObject {
      *  @param object           The `RLMObject` that has changed on iCloud.
      */
     func realmSwiftAdapter(_ adapter:RealmSwiftAdapter, gotChanges changes: [String: Any], object: Object)
+
+    /**
+     *  Called when a conflict between a local modification and a server deletion is detected.
+     *
+     *  @param adapter The `RealmSwiftAdapter` detecting the conflict.
+     *  @param object The local `Object` that has been modified.
+     *  @param recordID The `CKRecord.ID` of the record that was deleted on the server.
+     *
+     *  @return A boolean indicating whether the local modification should be preserved (true) or the deletion should be applied (false).
+     */
+    func realmSwiftAdapter(_ adapter: RealmSwiftAdapter, shouldIgnoreServerDeletionOf object: Object, with recordID: CKRecord.ID) -> Bool
 }
 
 public protocol RealmSwiftAdapterRecordProcessing: AnyObject {
@@ -740,7 +751,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                    let serverValue = value as? NSNumber,
                    let localValue = currentValue as? NSNumber {
 
-                    let ancestorRecord = getRecord(for: syncedEntity)
+                    let ancestorRecord = getRecord(from: syncedEntity.lastSyncedRecord)
                     let ancestorValue = (ancestorRecord?[key] as? NSNumber) ?? NSNumber(value: 0)
                     let delta = localValue.doubleValue - ancestorValue.doubleValue
                     finalValue = NSNumber(value: serverValue.doubleValue + delta)
@@ -932,7 +943,11 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
     }
     
     func getRecord(for syncedEntity: SyncedEntity) -> CKRecord? {
-        guard let recordData = syncedEntity.record?.encodedRecord else { return nil }
+        return getRecord(from: syncedEntity.record)
+    }
+
+    func getRecord(from recordEntity: Record?) -> CKRecord? {
+        guard let recordData = recordEntity?.encodedRecord else { return nil }
         return Coder.shared.decode(from: recordData)
     }
     
@@ -1247,6 +1262,11 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                 }
                 
                 save(record: record, for: syncedEntity)
+                
+                if syncedEntity.lastSyncedRecord == nil {
+                    syncedEntity.lastSyncedRecord = Record()
+                }
+                syncedEntity.lastSyncedRecord?.encodedRecord = self.encodedRecord(record, onlySystemFields: false)
             }
             // Order is important here. Notifications might be delivered after targetRealm is saved and
             // it's convenient if the persistenceRealm is not in a write transaction
@@ -1272,9 +1292,19 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                 if let syncedEntity = getSyncedEntity(objectIdentifier: recordID.recordName, realm: self.realmProvider.persistenceRealm) {
                     
                     if syncedEntity.entityState == .changed || syncedEntity.entityState == .new {
-                        // Local modification found. Skip deletion to avoid data loss.
-                        // The next sync will re-upload this record to CloudKit.
-                        continue
+                        
+                        let objectClass = realmObjectClass(name: syncedEntity.entityType)
+                        let objectIdentifier = getObjectIdentifier(for: syncedEntity)
+                        if let object = self.realmProvider.targetRealm.object(ofType: objectClass, forPrimaryKey: objectIdentifier),
+                           let delegate = self.delegate,
+                           delegate.realmSwiftAdapter(self, shouldIgnoreServerDeletionOf: object, with: recordID) == false {
+                            // Delegate said NOT to ignore, so we fall through to delete
+                        } else {
+                            // Local modification found and either no delegate or delegate said to ignore server deletion.
+                            // Skip deletion to avoid data loss.
+                            // The next sync will re-upload this record to CloudKit.
+                            continue
+                        }
                     }
                     
                     if syncedEntity.entityType != "CKShare" {
@@ -1359,6 +1389,11 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                     syncedEntity.state = SyncedEntityState.synced.rawValue
                     syncedEntity.changedKeys = nil
                     self.save(record: record, for: syncedEntity)
+                    
+                    if syncedEntity.lastSyncedRecord == nil {
+                        syncedEntity.lastSyncedRecord = Record()
+                    }
+                    syncedEntity.lastSyncedRecord?.encodedRecord = self.encodedRecord(record, onlySystemFields: false)
                 }
                 
             }
