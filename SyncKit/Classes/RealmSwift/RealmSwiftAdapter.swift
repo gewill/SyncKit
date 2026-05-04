@@ -466,6 +466,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             try? realmProvider.persistenceRealm.safeWrite {
                 syncedEntity.changedKeys = (changedKeys.allObjects as! [String]).joined(separator: ",")
                 syncedEntity.updated = Date()
+                syncedEntity.version += 1
                 if syncedEntity.state == SyncedEntityState.synced.rawValue && !syncedEntity.changedKeys!.isEmpty {
                     syncedEntity.state = SyncedEntityState.changed.rawValue
                     // If state was New then leave it as that
@@ -704,6 +705,10 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             return
         }
         
+        guard let property = object.objectSchema[key] else {
+            return
+        }
+        
         if let recordProcessingDelegate = recordProcessingDelegate,
            !recordProcessingDelegate.shouldProcessPropertyInDownload(propertyName: key, object: object, record: record) {
             return
@@ -719,9 +724,8 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                     object.setValue(newValue, forKey: key)
                 }
             }
-        } else if let list = currentValue as? AnyObject,
-                  list.responds(to: NSSelectorFromString("_rlmArray")),
-                  let rlmArray = list.value(forKey: "_rlmArray") as? RLMArray<AnyObject> {
+        } else if property.isArray,
+                  let rlmArray = currentValue as? RLMArray<AnyObject> {
             let serverValue = record[key]
             let ancestorRecord = getRecord(for: syncedEntity)
             let ancestorValue = ancestorRecord?[key]
@@ -820,11 +824,16 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             if let item = currentLocalItems.first(where: { identifierForItem($0) == id }) {
                 rlmArray.add(item as AnyObject)
             } else if let serverItem = serverItems.first(where: { identifierForItem($0) == id }) {
-                if let reference = serverItem as? CKRecord.Reference {
-                    let recordName = reference.recordID.recordName
-                    let separatorRange = recordName.range(of: ".")!
-                    let objectIdentifier = String(recordName[separatorRange.upperBound...])
-                    savePendingRelationship(name: key, syncedEntity: syncedEntity, targetIdentifier: objectIdentifier, realm: realmProvider.persistenceRealm)
+                let itemID = identifierForItem(serverItem)
+                if let separatorRange = itemID.range(of: ".") {
+                    let entityName = String(itemID[..<separatorRange.lowerBound])
+                    let objectIdentifier = String(itemID[separatorRange.upperBound...])
+                    
+                    if modelTypes[entityName] != nil {
+                        savePendingRelationship(name: key, syncedEntity: syncedEntity, targetIdentifier: objectIdentifier, realm: realmProvider.persistenceRealm)
+                    } else {
+                        rlmArray.add(serverItem as AnyObject)
+                    }
                 } else {
                     rlmArray.add(serverItem as AnyObject)
                 }
@@ -834,15 +843,30 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
 
     func identifierForItem(_ item: Any) -> String {
         if let target = item as? Object {
-            let targetIdentifier = self.getStringIdentifier(for: target, usingPrimaryKey: target.objectSchema.primaryKeyProperty!.name)
-            return "\(target.objectSchema.className).\(targetIdentifier)"
-        } else if let reference = item as? CKRecord.Reference {
-            return reference.recordID.recordName
-        } else if let date = item as? Date {
-            return "\(date.timeIntervalSince1970)"
-        } else {
-            return "\(item)"
+            let className = target.objectSchema.className
+            let primaryKey = target.objectSchema.primaryKeyProperty!.name
+            let targetIdentifier = self.getStringIdentifier(for: target, usingPrimaryKey: primaryKey)
+            return "\(className).\(targetIdentifier)"
         }
+        
+        let desc = "\(item)"
+        if desc.contains("recordName="),
+           let recordNameRange = desc.range(of: "recordName=") {
+            let remaining = desc[recordNameRange.upperBound...]
+            if let commaRange = remaining.range(of: ",") {
+                return String(remaining[..<commaRange.lowerBound])
+            } else if let bracketRange = remaining.range(of: ">") {
+                return String(remaining[..<bracketRange.lowerBound])
+            }
+        }
+        
+        if let reference = item as? CKRecord.Reference {
+            return reference.recordID.recordName
+        } else if let recordID = (item as AnyObject).value(forKey: "recordID") as? CKRecord.ID {
+            return recordID.recordName
+        }
+        
+        return desc
     }
     
     func savePendingRelationship(name: String, syncedEntity: SyncedEntity, targetIdentifier: String, realm: Realm) {
@@ -913,9 +937,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             }
             
             let propertyValue = originObject.value(forKey: relationship.relationshipName)
-            if let list = propertyValue as? AnyObject,
-               list.responds(to: NSSelectorFromString("_rlmArray")),
-               let rlmArray = list.value(forKey: "_rlmArray") as? RLMArray<AnyObject> {
+            if let rlmArray = propertyValue as? RLMArray<AnyObject> {
                 rlmArray.add(target as AnyObject)
             } else {
                 originObject.setValue(target, forKey: relationship.relationshipName)
@@ -1047,15 +1069,15 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
     }
     
     func recordToUpload(syncedEntity: SyncedEntity, realmProvider: RealmProvider, parentSyncedEntity: inout SyncedEntity?) -> CKRecord? {
-        
+
         let record = getRecord(for: syncedEntity) ?? CKRecord(recordType: syncedEntity.entityType, recordID: CKRecord.ID(recordName: syncedEntity.identifier, zoneID: zoneID))
-        
+
         let objectClass = realmObjectClass(name: syncedEntity.entityType)
         let primaryKey = objectClass.primaryKey()!
         let objectIdentifier = getObjectIdentifier(for: syncedEntity)
         let object = realmProvider.targetRealm.object(ofType: objectClass, forPrimaryKey: objectIdentifier)
         let entityState = syncedEntity.state
-        
+
         guard let object = object else {
             // Object does not exist, but tracking syncedEntity thinks it does.
             // We mark it as deleted so the iCloud record will get deleted too
@@ -1064,30 +1086,32 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             }
             return nil
         }
-        
+
         let changedKeys = (syncedEntity.changedKeys ?? "").components(separatedBy: ",")
-        
+
+        record[CloudKitSynchronizer.entityVersionKey] = syncedEntity.version as CKRecordValue
+
         var parentKey: String?
         if let childObject = object as? ParentKey {
             parentKey = type(of: childObject).parentKey()
         }
-        
+
         let encryptedFields = entityEncryptedFields[syncedEntity.entityType]
-        
+
         var parent: Object? = nil
-        
+
         for property in object.objectSchema.properties {
-            
+
             if (entityState == SyncedEntityState.new.rawValue || changedKeys.contains(property.name)) {
-                
+
                 if let recordProcessingDelegate = recordProcessingDelegate,
                    !recordProcessingDelegate.shouldProcessPropertyBeforeUpload(propertyName: property.name, object: object, record: record) {
                     continue
                 }
-                
-                if property.type == PropertyType.object {
+
+                if property.type == PropertyType.object && !property.isArray {
                     if let target = object.value(forKey: property.name) as? Object {
-                        
+
                         let targetIdentifier = self.getStringIdentifier(for: target, usingPrimaryKey: primaryKey)
                         let referenceIdentifier = "\(property.objectClassName!).\(targetIdentifier)"
                         let recordID = CKRecord.ID(recordName: referenceIdentifier, zoneID: zoneID)
@@ -1101,7 +1125,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                     }
                 } else if property.type != PropertyType.linkingObjects &&
                             !(property.name == objectClass.primaryKey()!) {
-                    
+
                     if let encrypted = encryptedFields,
                        encrypted.contains(property.name) {
                         if #available(iOS 15, OSX 12, watchOS 8.0, *) {
@@ -1109,11 +1133,9 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                         }
                     } else {
                         let value = object.value(forKey: property.name)
-                        
+
                         if property.isArray,
-                           let list = value as? AnyObject,
-                           list.responds(to: NSSelectorFromString("_rlmArray")),
-                           let rlmArray = list.value(forKey: "_rlmArray") as? RLMArray<AnyObject> {
+                           let rlmArray = value as? RLMArray<AnyObject> {
                             var array = [Any]()
                             for i in 0..<rlmArray.count {
                                 let item = rlmArray.object(at: i)
@@ -1130,7 +1152,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                         } else if property.type == PropertyType.data,
                             let data = value as? Data,
                             forceDataTypeInsteadOfAsset == false  {
-                            
+
                             let fileURL = self.tempFileManager.store(data: data)
                             let asset = CKAsset(fileURL: fileURL)
                             record[property.name] = asset
@@ -1388,6 +1410,8 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                     
                     syncedEntity.state = SyncedEntityState.synced.rawValue
                     syncedEntity.changedKeys = nil
+                    let serverVersion = record[CloudKitSynchronizer.entityVersionKey] as? Int ?? 0
+                    syncedEntity.version = max(syncedEntity.version, serverVersion)
                     self.save(record: record, for: syncedEntity)
                     
                     if syncedEntity.lastSyncedRecord == nil {
