@@ -16,6 +16,7 @@ class SyncedEntity: Object {
     @objc dynamic var state: Int = 0
     @objc dynamic var changedKeys: String?
     @objc dynamic var updated: Date?
+    @objc dynamic var version: Int = 0
     @objc dynamic var record: Record?
     @objc dynamic var share: SyncedEntity?
     

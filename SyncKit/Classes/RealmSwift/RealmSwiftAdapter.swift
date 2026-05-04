@@ -596,13 +596,20 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                     applyChange(property: property.name, record: record, object: object, syncedEntity: syncedEntity, realmProvider: realmProvider)
                 }
                 
+                let serverVersion = record[CloudKitSynchronizer.entityVersionKey] as? Int ?? 0
+                syncedEntity.version = max(syncedEntity.version, serverVersion)
+                
             } else if mergePolicy == .client {
                 
                 let changedKeysString = syncedEntity.changedKeys ?? ""
                 var changedKeys: [String] = changedKeysString.components(separatedBy: ",")
                 let serverDate = record.modificationDate
                 let localDate = syncedEntity.updated
+                let serverVersion = record[CloudKitSynchronizer.entityVersionKey] as? Int ?? 0
+                let localVersion = syncedEntity.version
+                
                 let serverIsNewer = serverDate != nil && localDate != nil && serverDate! > localDate!
+                let serverIsSeverelyOutdated = serverVersion > localVersion
                 var keysToRemove = [String]()
                 
                 for property in object.objectSchema.properties {
@@ -615,9 +622,9 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                         let isModifiedLocally = changedKeys.contains(property.name)
                         let isNew = syncedEntity.state == SyncedEntityState.new.rawValue
                         
-                        if !isModifiedLocally || serverIsNewer || (isNew && object.value(forKey: property.name) == nil) {
+                        if !isModifiedLocally || serverIsSeverelyOutdated || serverIsNewer || (isNew && object.value(forKey: property.name) == nil) {
                             applyChange(property: property.name, record: record, object: object, syncedEntity: syncedEntity, realmProvider: realmProvider)
-                            if isModifiedLocally && serverIsNewer {
+                            if isModifiedLocally && (serverIsSeverelyOutdated || serverIsNewer) {
                                 keysToRemove.append(property.name)
                             }
                         }
@@ -631,6 +638,8 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                         syncedEntity.state = SyncedEntityState.synced.rawValue
                     }
                 }
+                
+                syncedEntity.version = max(syncedEntity.version, serverVersion)
                 
             } else if mergePolicy == .custom {
                 
@@ -655,6 +664,9 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                 
                 delegate?.realmSwiftAdapter(self, gotChanges: recordChanges, object: object)
                 
+                let serverVersion = record[CloudKitSynchronizer.entityVersionKey] as? Int ?? 0
+                syncedEntity.version = max(syncedEntity.version, serverVersion)
+                
             }
         } else {
             
@@ -669,6 +681,9 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                 
                 applyChange(property: property.name, record: record, object: object, syncedEntity: syncedEntity, realmProvider: realmProvider)
             }
+            
+            let serverVersion = record[CloudKitSynchronizer.entityVersionKey] as? Int ?? 0
+            syncedEntity.version = max(syncedEntity.version, serverVersion)
         }
     }
     

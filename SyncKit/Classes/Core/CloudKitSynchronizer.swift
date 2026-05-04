@@ -159,6 +159,7 @@ public class CloudKitSynchronizer: NSObject {
     @objc public static var defaultBatchSize = 200
     static let deviceUUIDKey = "SKCloudKitDeviceUUIDKey"
     static let modelCompatibilityVersionKey = "SKCloudKitModelCompatibilityVersionKey"
+    @objc public static let entityVersionKey = "SKCloudKitEntityVersionKey"
     
     /// Initializes a newly allocated synchronizer.
     /// - Parameters:
@@ -203,7 +204,7 @@ public class CloudKitSynchronizer: NSObject {
     // MARK: - Public
     
     ///  These keys will be added to CKRecords uploaded to CloudKit and are used by SyncKit internally.
-    public static let metadataKeys: [String] = [CloudKitSynchronizer.deviceUUIDKey, CloudKitSynchronizer.modelCompatibilityVersionKey]
+    public static let metadataKeys: [String] = [CloudKitSynchronizer.deviceUUIDKey, CloudKitSynchronizer.modelCompatibilityVersionKey, CloudKitSynchronizer.entityVersionKey]
     
     /// Synchronize data with CloudKit.
     /// - Parameter completion: Completion block that receives an optional error. Could be a `SyncError`, `CKError`, or any other error found during synchronization.

@@ -10,7 +10,8 @@ The RealmSwift module provides the implementation of `ModelAdapter` for Realm st
 
 ## Conflict Resolution
 
-- **Smart LWW**: The `.client` policy uses the `updated` timestamp in `SyncedEntity` and compares it with CloudKit's `modificationDate` to resolve conflicts deterministically.
+- **Vector Clocks & Version Tracking**: `SyncedEntity` maintains a `version` counter that increments on every local change. This version is synchronized with CloudKit.
+- **Smart LWW**: The `.client` policy uses a combination of the `version` counter and the `updated` timestamp. If the server version is greater than the local version, the server state overrides local changes (base-revision update). If versions are equal or local is greater but dates differ, it resolves conflicts deterministically using the `updated` timestamp vs CloudKit's `modificationDate`.
 - **Delta Counters**: Support for properties to be treated as counters using `RealmSwiftAdapterCounterProvider`. These are merged using delta addition to prevent data loss in concurrent updates.
 - **Semantic List Merging**: Realm `List` properties (to-many relationships or value arrays) are merged using set semantics: `Result = (Server ∪ LocalAdditions) - LocalDeletions`. This prevents overwriting concurrent additions from different devices.
 
