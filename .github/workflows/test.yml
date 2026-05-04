@@ -15,7 +15,5 @@ jobs:
       - name: "Select Xcode 15.0"
         run: sudo xcode-select -s "/Applications/Xcode_15.0.app"
       - uses: actions/checkout@v3
-      - name: Pods RealmSwift
-        run: pod install --repo-update --project-directory=Example/RealmSwift/
       - name: Test Realm Swift
-        run: set -o pipefail && xcodebuild test -workspace Example/RealmSwift/SyncKitRealmSwift.xcworkspace -scheme SyncKitRealmSwiftExample -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 14' ONLY_ACTIVE_ARCH=YES | xcpretty
+        run: set -o pipefail && xcodebuild test -project Example/RealmSwift/SyncKitRealmSwiftExample/SyncKitRealmSwiftExample.xcodeproj -scheme SyncKitRealmSwiftExample -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 14' ONLY_ACTIVE_ARCH=YES | xcpretty

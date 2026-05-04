@@ -2,9 +2,7 @@
 
 ![GitHub Workflow Status (branch)](https://img.shields.io/github/workflow/status/mentrena/synckit/Test/master)
 [![Carthage compatible](https://img.shields.io/badge/Carthage-compatible-4BC51D.svg?style=flat)](https://github.com/Carthage/Carthage)
-[![Version](https://img.shields.io/cocoapods/v/SyncKit.svg?style=flat)](http://cocoapods.org/pods/SyncKit)
 [![License](https://img.shields.io/cocoapods/l/SyncKit.svg?style=flat)](http://cocoapods.org/pods/SyncKit)
-[![Platform](https://img.shields.io/cocoapods/p/SyncKit.svg?style=flat)](http://cocoapods.org/pods/SyncKit)
 
 SyncKit automates the process of synchronizing RealmSwift models using CloudKit.
 
@@ -27,14 +25,6 @@ Add SyncKit to your `Package.swift`:
 dependencies: [
     .package(url: "https://github.com/mentrena/SyncKit", from: "2.0.0")
 ]
-```
-
-### CocoaPods
-
-Add SyncKit to your `Podfile`:
-
-```ruby
-pod 'SyncKit'
 ```
 
 ## License
