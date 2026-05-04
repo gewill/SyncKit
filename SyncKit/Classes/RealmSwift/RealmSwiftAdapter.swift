@@ -8,6 +8,8 @@
 
 import CloudKit
 import RealmSwift
+import Realm
+import Foundation
 
 func executeOnMainQueue(_ closure: () -> ()) {
     if Thread.isMainThread {
@@ -69,6 +71,14 @@ public protocol RealmSwiftAdapterRecordProcessing: AnyObject {
     func shouldProcessPropertyInDownload(propertyName: String, object: Object, record: CKRecord) -> Bool
 }
 
+/**
+ *  An object conforming to this protocol can provide information about which properties should be treated as counters.
+ *  Counters are merged using delta addition instead of Last-Write-Wins during conflicts.
+ */
+@objc public protocol RealmSwiftAdapterCounterProvider: AnyObject {
+    func isCounter(property: String, in entityType: String) -> Bool
+}
+
 struct ChildRelationship {
     
     let parentEntityName: String
@@ -119,6 +129,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
     public var mergePolicy: MergePolicy = .server
     public weak var delegate: RealmSwiftAdapterDelegate?
     public weak var recordProcessingDelegate: RealmSwiftAdapterRecordProcessing?
+    public weak var counterProvider: RealmSwiftAdapterCounterProvider?
     public var forceDataTypeInsteadOfAsset: Bool = false
     
     private lazy var tempFileManager: TempFileManager = {
@@ -578,7 +589,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                     if shouldIgnore(key: property.name) {
                         continue
                     }
-                    if property.isArray || property.type == PropertyType.linkingObjects {
+                    if property.type == PropertyType.linkingObjects {
                         continue
                     }
                     
@@ -596,7 +607,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                 
                 for property in object.objectSchema.properties {
                     
-                    if property.isArray || property.type == PropertyType.linkingObjects {
+                    if property.type == PropertyType.linkingObjects {
                         continue
                     }
                     
@@ -627,7 +638,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                 
                 for property in object.objectSchema.properties {
                     
-                    if property.isArray || property.type == PropertyType.linkingObjects {
+                    if property.type == PropertyType.linkingObjects {
                         continue
                     }
                     
@@ -682,6 +693,15 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                     object.setValue(newValue, forKey: key)
                 }
             }
+        } else if let list = currentValue as? AnyObject,
+                  list.responds(to: NSSelectorFromString("_rlmArray")),
+                  let rlmArray = list.value(forKey: "_rlmArray") as? RLMArray<AnyObject> {
+            let serverValue = record[key]
+            let ancestorRecord = getRecord(for: syncedEntity)
+            let ancestorValue = ancestorRecord?[key]
+            
+            applyListChanges(property: key, rlmArray: rlmArray, serverValue: serverValue, ancestorValue: ancestorValue, syncedEntity: syncedEntity)
+            
         } else {
             let value = record[key]
             if let reference = value as? CKRecord.Reference {
@@ -699,8 +719,20 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                     }
                 }
             } else if value != nil || object.objectSchema[key]?.isOptional == true {
-                if !isEquivalent(currentValue, value) {
-                    object.setValue(value, forKey: key)
+                var finalValue = value
+                if let counterProvider = counterProvider,
+                   counterProvider.isCounter(property: key, in: syncedEntity.entityType),
+                   let serverValue = value as? NSNumber,
+                   let localValue = currentValue as? NSNumber {
+
+                    let ancestorRecord = getRecord(for: syncedEntity)
+                    let ancestorValue = (ancestorRecord?[key] as? NSNumber) ?? NSNumber(value: 0)
+                    let delta = localValue.doubleValue - ancestorValue.doubleValue
+                    finalValue = NSNumber(value: serverValue.doubleValue + delta)
+                }
+
+                if !isEquivalent(currentValue, finalValue) {
+                    object.setValue(finalValue, forKey: key)
                 }
             }
         }
@@ -721,6 +753,70 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
         }
         
         return false
+    }
+
+    func applyListChanges(property key: String, rlmArray: RLMArray<AnyObject>, serverValue: Any?, ancestorValue: Any?, syncedEntity: SyncedEntity) {
+        let serverItems = serverValue as? [Any] ?? []
+        let ancestorItems = ancestorValue as? [Any] ?? []
+        
+        var currentLocalItems = [Any]()
+        for i in 0..<rlmArray.count {
+            currentLocalItems.append(rlmArray.object(at: i))
+        }
+        
+        let serverIds = Set(serverItems.map { identifierForItem($0) })
+        let ancestorIds = Set(ancestorItems.map { identifierForItem($0) })
+        let localIds = Set(currentLocalItems.map { identifierForItem($0) })
+        
+        let localAdditions = localIds.subtracting(ancestorIds)
+        let localDeletions = ancestorIds.subtracting(localIds)
+        
+        let finalIds = serverIds.union(localAdditions).subtracting(localDeletions)
+        
+        // Update list
+        // Remove items no longer in finalIds
+        var i = 0
+        while i < Int(rlmArray.count) {
+            let item = rlmArray.object(at: UInt(i))
+            if !finalIds.contains(identifierForItem(item)) {
+                rlmArray.removeObject(at: UInt(i))
+            } else {
+                i += 1
+            }
+        }
+        
+        // Add new items from finalIds
+        let currentIds = Set((0..<Int(rlmArray.count)).map { identifierForItem(rlmArray.object(at: UInt($0))) })
+        let idsToAdd = finalIds.subtracting(currentIds)
+        
+        for id in idsToAdd {
+            // Find item in local or server
+            if let item = currentLocalItems.first(where: { identifierForItem($0) == id }) {
+                rlmArray.add(item as AnyObject)
+            } else if let serverItem = serverItems.first(where: { identifierForItem($0) == id }) {
+                if let reference = serverItem as? CKRecord.Reference {
+                    let recordName = reference.recordID.recordName
+                    let separatorRange = recordName.range(of: ".")!
+                    let objectIdentifier = String(recordName[separatorRange.upperBound...])
+                    savePendingRelationship(name: key, syncedEntity: syncedEntity, targetIdentifier: objectIdentifier, realm: realmProvider.persistenceRealm)
+                } else {
+                    rlmArray.add(serverItem as AnyObject)
+                }
+            }
+        }
+    }
+
+    func identifierForItem(_ item: Any) -> String {
+        if let target = item as? Object {
+            let targetIdentifier = self.getStringIdentifier(for: target, usingPrimaryKey: target.objectSchema.primaryKeyProperty!.name)
+            return "\(target.objectSchema.className).\(targetIdentifier)"
+        } else if let reference = item as? CKRecord.Reference {
+            return reference.recordID.recordName
+        } else if let date = item as? Date {
+            return "\(date.timeIntervalSince1970)"
+        } else {
+            return "\(item)"
+        }
     }
     
     func savePendingRelationship(name: String, syncedEntity: SyncedEntity, targetIdentifier: String, realm: Realm) {
@@ -789,7 +885,15 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             guard let target = targetObject else {
                 continue
             }
-            originObject.setValue(target, forKey: relationship.relationshipName)
+            
+            let propertyValue = originObject.value(forKey: relationship.relationshipName)
+            if let list = propertyValue as? AnyObject,
+               list.responds(to: NSSelectorFromString("_rlmArray")),
+               let rlmArray = list.value(forKey: "_rlmArray") as? RLMArray<AnyObject> {
+                rlmArray.add(target as AnyObject)
+            } else {
+                originObject.setValue(target, forKey: relationship.relationshipName)
+            }
             
             realmProvider.persistenceRealm.delete(relationship)
         }
@@ -965,8 +1069,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                             parent = target
                         }
                     }
-                } else if !property.isArray &&
-                            property.type != PropertyType.linkingObjects &&
+                } else if property.type != PropertyType.linkingObjects &&
                             !(property.name == objectClass.primaryKey()!) {
                     
                     if let encrypted = encryptedFields,
@@ -976,7 +1079,25 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                         }
                     } else {
                         let value = object.value(forKey: property.name)
-                        if property.type == PropertyType.data,
+                        
+                        if property.isArray,
+                           let list = value as? AnyObject,
+                           list.responds(to: NSSelectorFromString("_rlmArray")),
+                           let rlmArray = list.value(forKey: "_rlmArray") as? RLMArray<AnyObject> {
+                            var array = [Any]()
+                            for i in 0..<rlmArray.count {
+                                let item = rlmArray.object(at: i)
+                                if let target = item as? Object {
+                                    let targetIdentifier = self.getStringIdentifier(for: target, usingPrimaryKey: target.objectSchema.primaryKeyProperty!.name)
+                                    let referenceIdentifier = "\(target.objectSchema.className).\(targetIdentifier)"
+                                    let recordID = CKRecord.ID(recordName: referenceIdentifier, zoneID: zoneID)
+                                    array.append(CKRecord.Reference(recordID: recordID, action: .none))
+                                } else {
+                                    array.append(item)
+                                }
+                            }
+                            record[property.name] = array as NSArray
+                        } else if property.type == PropertyType.data,
                             let data = value as? Data,
                             forceDataTypeInsteadOfAsset == false  {
                             
