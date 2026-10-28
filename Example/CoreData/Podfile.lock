@@ -1,0 +1,18 @@
+PODS:
+  - SyncKit/Core (1.3.2)
+  - SyncKit/CoreData (1.3.2):
+    - SyncKit/Core
+
+DEPENDENCIES:
+  - SyncKit/CoreData (from `../../`)
+
+EXTERNAL SOURCES:
+  SyncKit:
+    :path: "../../"
+
+SPEC CHECKSUMS:
+  SyncKit: 1af461e0277ca19cb4edd2a640291a0ae13e824a
+
+PODFILE CHECKSUM: f9827b3e15dba5f4bb635711d93373030f9faca7
+
+COCOAPODS: 1.17.0
