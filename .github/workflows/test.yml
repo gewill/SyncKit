@@ -2,28 +2,61 @@ name: Test
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   pull_request:
-    branches: [ master ]
+    branches: [master]
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-
-    runs-on: macos-11
-
+    name: Test (${{ matrix.example }})
+    runs-on: macos-26-intel
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [CoreData, Realm, RealmSwift]
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      EXAMPLE: ${{ matrix.example }}
     steps:
-      - name: "Select Xcode 13.1"
-        run: sudo xcode-select -s "/Applications/Xcode_13.1.app"
-      - uses: actions/checkout@v2
-      - name: Pods Core Data
-        run: pod install --repo-update --project-directory=Example/CoreData/
-      - name: Pods Realm
-        run: pod install --repo-update --project-directory=Example/Realm/
-      - name: Pods RealmSwift
-        run: pod install --repo-update --project-directory=Example/RealmSwift/
-      - name: Test Core Data
-        run: set -o pipefail && xcodebuild test -workspace Example/CoreData/SyncKitCoreData.xcworkspace -scheme SyncKitCoreDataExample -sdk iphonesimulator15.0 -destination 'platform=iOS Simulator,name=iPhone 11,OS=15.0' ONLY_ACTIVE_ARCH=YES | xcpretty
-      - name: Test Realm
-        run: set -o pipefail && xcodebuild test -workspace Example/Realm/SyncKitRealm.xcworkspace -scheme SyncKitRealmExample -sdk iphonesimulator15.0 -destination 'platform=iOS Simulator,name=iPhone 11,OS=15.0' ONLY_ACTIVE_ARCH=YES | xcpretty
-      - name: Test Realm Swift
-        run: set -o pipefail && xcodebuild test -workspace Example/RealmSwift/SyncKitRealmSwift.xcworkspace -scheme SyncKitRealmSwiftExample -sdk iphonesimulator15.0 -destination 'platform=iOS Simulator,name=iPhone 11,OS=15.0' ONLY_ACTIVE_ARCH=YES | xcpretty
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Record toolchain
+        run: |
+          mkdir -p artifacts
+          { git rev-parse HEAD; xcodebuild -version; xcodebuild -showsdks; pod --version; } | tee artifacts/environment.log
+      - name: Install pods
+        run: pod install --deployment --repo-update --project-directory="Example/$EXAMPLE" 2>&1 | tee artifacts/pods.log
+      - name: Select available iPhone simulator
+        run: |
+          xcrun simctl list devices available --json > artifacts/simulators.json
+          python3 scripts/ci/select-simulator.py artifacts/simulators.json >> "$GITHUB_ENV"
+      - name: Test example
+        run: |
+          xcodebuild test \
+            -workspace "Example/$EXAMPLE/SyncKit$EXAMPLE.xcworkspace" \
+            -scheme "SyncKit${EXAMPLE}Example" \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+            -parallel-testing-enabled NO \
+            -resultBundlePath artifacts/tests.xcresult \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM="" 2>&1 | tee artifacts/xcodebuild.log
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tests-${{ matrix.example }}-${{ github.run_attempt }}
+          path: artifacts/
+          retention-days: 7

@@ -5,7 +5,7 @@ project 'SyncKitRealmExample/SyncKitRealmExample'
 
 target 'SyncKitRealmExample' do
 	
-  platform :ios, '10.0'
+  platform :ios, '15.0'
 
   pod 'Realm'
   pod 'SyncKit/Realm', :path => '../../'
@@ -18,7 +18,7 @@ end
 target 'SyncKitRealmExampleTodayExtension' do
 
 #	project 'SyncKitRealmExample'
-	platform :ios, '10.0'
+	platform :ios, '15.0'
 	
 	pod 'SyncKit/Realm', :path => '../../'
 

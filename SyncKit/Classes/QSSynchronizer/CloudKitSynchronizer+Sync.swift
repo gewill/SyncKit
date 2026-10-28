@@ -527,7 +527,7 @@ extension CloudKitSynchronizer {
             return
         }
         
-        let operation = FetchZoneChangesOperation(database: database, zoneIDs: recordZoneIDs, zoneChangeTokens: activeZoneTokens, modelVersion: compatibilityVersion, ignoreDeviceIdentifier: deviceIdentifier, desiredKeys: ["recordID", CloudKitSynchronizer.deviceUUIDKey]) { (zoneResults) in
+        let operation = FetchZoneChangesOperation(database: database, zoneIDs: recordZoneIDs, zoneChangeTokens: activeZoneTokens, modelVersion: compatibilityVersion, ignoreDeviceIdentifier: deviceIdentifier, desiredKeys: ["recordID"] + CloudKitSynchronizer.metadataKeys) { (zoneResults) in
             self.dispatchQueue.async {
                 var pendingZones = [CKRecordZone.ID]()
                 var needsToRefetch = false
