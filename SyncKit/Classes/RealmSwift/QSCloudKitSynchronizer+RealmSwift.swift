@@ -33,7 +33,19 @@ extension CloudKitSynchronizer {
                                                 adapterProvider: provider,
                                                 keyValueStore: userDefaultsAdapter)
         synchronizer.addModelAdapter(provider.adapter)
-        transferOldServerChangeToken(to: provider.adapter, userDefaults: userDefaultsAdapter, containerName: containerName)
+        if provider.adapter.initializationError == nil {
+            let recovered = provider.usesRecoveredStore
+            if !recovered {
+                transferOldServerChangeToken(to: provider.adapter, userDefaults: userDefaultsAdapter, containerName: containerName)
+            }
+            // A broken adapter could advance the database cursor without importing the zone.
+            // Rediscover the zones once, preserving each working tracking store's own cursor.
+            let recoveryKey = containerName + "-DefaultRealmSwiftPrivateSynchronizer-trackingPathRecovery"
+            if !userDefaults.bool(forKey: recoveryKey) || (recovered && provider.adapter.serverChangeToken == nil) {
+                synchronizer.resetDatabaseToken()
+                userDefaults.set(true, forKey: recoveryKey)
+            }
+        }
         return synchronizer
     }
     

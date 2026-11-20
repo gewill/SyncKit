@@ -14,6 +14,8 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
     let zoneID: CKRecordZone.ID
     let persistenceConfiguration: Realm.Configuration
     let targetConfiguration: Realm.Configuration
+    private let historicalStores: [URL]
+    let usesRecoveredStore: Bool
     let appGroup: String?
     public private(set) var adapter: RealmSwiftAdapter!
     
@@ -21,7 +23,12 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
         self.targetConfiguration = targetConfiguration
         self.zoneID = zoneID
         self.appGroup = appGroup
-        persistenceConfiguration = DefaultRealmSwiftAdapterProvider.createPersistenceConfiguration(suiteName: appGroup)
+        let paths = Self.storePaths(appGroup: appGroup)
+        historicalStores = paths.sources
+        usesRecoveredStore = paths.active.deletingLastPathComponent().lastPathComponent == "Recovered"
+        var configuration = RealmSwiftAdapter.defaultPersistenceConfiguration()
+        configuration.fileURL = paths.active
+        persistenceConfiguration = configuration
         super.init()
         adapter = createAdapter()
     }
@@ -48,7 +55,13 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
     
     fileprivate func createAdapter() -> RealmSwiftAdapter {
         
-        return RealmSwiftAdapter(persistenceRealmConfiguration: persistenceConfiguration, targetRealmConfiguration: targetConfiguration, recordZoneID: zoneID)
+        return RealmSwiftAdapter(persistenceRealmConfiguration: persistenceConfiguration, targetRealmConfiguration: targetConfiguration, recordZoneID: zoneID) {
+            let path = self.persistenceConfiguration.fileURL!
+            if self.historicalStores.count > 1 {
+                try Self.recover(self.historicalStores, to: path, target: self.targetConfiguration)
+            }
+            try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
     }
     
     // MARK: - File directory
@@ -63,19 +76,124 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
      */
     
     public static func realmPath(appGroup: String?) -> String {
-        return applicationBackupRealmPath(suiteName: appGroup).appending(realmFileName())
+        storePaths(appGroup: appGroup).active.path
     }
-    
-    fileprivate static func applicationBackupRealmPath(suiteName: String?) -> String! {
-        let rootDirectory: String?
-        if let suiteName = suiteName {
-            rootDirectory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: suiteName)?.path
-        } else {
-            rootDirectory = applicationDocumentsDirectory()
+
+    private static func storePaths(appGroup: String?) -> (active: URL, sources: [URL]) {
+        let fm = FileManager.default
+        let root = appGroup.map { fm.containerURL(forSecurityApplicationGroupIdentifier: $0)!.path }
+            ?? applicationDocumentsDirectory()!
+        let directory = URL(fileURLWithPath: root).appendingPathComponent("Realm", isDirectory: true)
+        let canonical = directory.appendingPathComponent(realmFileName())
+        let published = directory.appendingPathComponent("Recovered").appendingPathComponent(realmFileName())
+        // The directory is the commit marker, even after SyncKit explicitly resets its store.
+        if fm.fileExists(atPath: published.deletingLastPathComponent().path) { return (published, []) }
+        var paths = [canonical, URL(fileURLWithPath: root + "Realm" + realmFileName())]
+        if appGroup == nil, let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).last {
+            let old = support.appendingPathComponent("com.mentrena.QSCloudKitSynchronizerRealm" + realmFileName())
+            if !paths.contains(old) { paths.append(old) }
         }
-        return rootDirectory?.appending("Realm")
+        let existing = paths.filter { fm.fileExists(atPath: $0.path) }
+        return (existing.count > 1 ? published : existing.first ?? canonical, existing)
     }
-    
+
+    static func recover(_ paths: [URL], to destination: URL, target: Realm.Configuration) throws {
+        let fm = FileManager.default
+        let published = destination.deletingLastPathComponent()
+        if fm.fileExists(atPath: published.path) { return }
+        let directory = published.deletingLastPathComponent()
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        let staging = directory.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: staging, withIntermediateDirectories: false)
+        defer { try? fm.removeItem(at: staging) }
+        let reader = DispatchQueue(label: "SyncKit.trackingStoreRecovery")
+        try reader.sync {
+            try autoreleasepool {
+                try writeRecoveredStore(from: paths, to: staging.appendingPathComponent(destination.lastPathComponent),
+                                        target: target, reader: reader)
+            }
+        }
+        do {
+            try fm.moveItem(at: staging, to: published)
+        } catch {
+            // A concurrent opener may have committed the same recovery first.
+            if !fm.fileExists(atPath: destination.path) { throw error }
+        }
+    }
+
+    private static func writeRecoveredStore(from paths: [URL], to file: URL,
+                                            target: Realm.Configuration, reader: DispatchQueue) throws {
+        let config = RealmSwiftAdapter.defaultPersistenceConfiguration()
+        var groups = [String: [SyncedEntity]]()
+        let sources = try paths.map { path -> Realm in
+            var source = config
+            source.fileURL = path
+            source.readOnly = true
+            return try Realm(configuration: source, queue: reader)
+        }
+        for source in sources {
+            // Shared graphs need relationship-aware reconciliation; leave them intact.
+            guard source.objects(PendingRelationship.self).isEmpty else { throw CocoaError(.featureUnsupported) }
+            for row in source.objects(SyncedEntity.self) {
+                guard row.share == nil, row.entityType != "CKShare",
+                      let state = SyncedEntityState(rawValue: row.state), state != .inserted else { throw CocoaError(.featureUnsupported) }
+                groups[row.identifier, default: []].append(row)
+            }
+        }
+
+        let local = try Realm(configuration: target)
+        var localTypes = [String: String]()
+        for schema in local.schema.objectSchema {
+            guard let key = schema.primaryKeyProperty?.name else { throw CocoaError(.featureUnsupported) }
+            for object in local.dynamicObjects(schema.className) {
+                guard let value = object[key] else { throw CocoaError(.fileReadCorruptFile) }
+                localTypes[schema.className + "." + String(describing: value)] = schema.className
+            }
+        }
+        var output = config
+        output.fileURL = file
+        let merged = try Realm(configuration: output)
+        try merged.write {
+            for (id, rows) in groups {
+                let hasLocal = localTypes[id] != nil
+                let states = rows.map { $0.entityState }
+                let pendingWrite = states.contains(.new) || states.contains(.changed)
+                let deleted = states.contains(.deleted)
+                let state: SyncedEntityState
+                if hasLocal {
+                    if states.contains(.new) { state = .new }
+                    else if states.contains(.changed) { state = .changed }
+                    else if deleted { state = .new }
+                    else { state = .synced }
+                } else {
+                    // An edit/delete disagreement with no local copy is restored by a full fetch.
+                    guard deleted && !pendingWrite else { continue }
+                    state = .deleted
+                }
+                let entry = SyncedEntity(entityType: rows[0].entityType, identifier: id, state: state.rawValue)
+                if state != .synced {
+                    var keys = Set(rows.filter { state != .deleted && $0.entityState == .changed }
+                            .flatMap { $0.changedKeys?.components(separatedBy: ",") ?? [] })
+                    keys.insert(SyncedEntity.recoveryKey)
+                    entry.changedKeys = keys.sorted().joined(separator: ",")
+                }
+                // Use the delete's own baseline for conditional replay, never another store's revision.
+                let baselines = rows.filter { state == .deleted && $0.entityState == .deleted }
+                if let bytes = baselines.compactMap({ $0.record?.encodedRecord }).first {
+                    let record = Record()
+                    record.encodedRecord = bytes
+                    entry.record = record
+                }
+                merged.add(entry)
+            }
+            for (id, type) in localTypes where groups[id] == nil {
+                let entry = SyncedEntity(entityType: type, identifier: id, state: SyncedEntityState.new.rawValue)
+                entry.changedKeys = SyncedEntity.recoveryKey
+                merged.add(entry)
+            }
+        }
+    }
+
     fileprivate static func applicationDocumentsDirectory() -> String? {
         #if os(iOS) || os(watchOS) || os(tvOS)
         return NSSearchPathForDirectoriesInDomains(.libraryDirectory, .userDomainMask, true).last
@@ -89,16 +207,4 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
         return "QSSyncStore.realm"
     }
     
-    fileprivate static func createPersistenceConfiguration(suiteName: String?) -> Realm.Configuration {
-        ensurePathAvailable(suiteName: suiteName)
-        var configuration = RealmSwiftAdapter.defaultPersistenceConfiguration()
-        configuration.fileURL = URL(fileURLWithPath: realmPath(appGroup: suiteName))
-        return configuration
-    }
-    
-    fileprivate static func ensurePathAvailable(suiteName: String?) {
-        if !FileManager.default.fileExists(atPath: applicationBackupRealmPath(suiteName: suiteName)) {
-            try? FileManager.default.createDirectory(atPath: applicationBackupRealmPath(suiteName: suiteName), withIntermediateDirectories: true, attributes: [:])
-        }
-    }
 }

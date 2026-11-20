@@ -213,6 +213,13 @@ public class CloudKitSynchronizer: NSObject {
             return
         }
         
+        for adapter in modelAdapters {
+            if let error = (adapter as? ModelAdapterInitialization)?.initializationError {
+                completion?(error)
+                return
+            }
+        }
+
         debugPrint("CloudKitSynchronizer >> Initiating synchronization")
         cancelSync = false
         syncing = true

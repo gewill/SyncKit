@@ -9,7 +9,7 @@
 import XCTest
 import RealmSwift
 import CloudKit
-import SyncKit
+@testable import SyncKit
 @testable import SyncKitRealmSwiftExample
 
 class SyncKitRealmSwiftTests: XCTestCase, RealmSwiftAdapterDelegate {
@@ -1714,5 +1714,55 @@ extension SyncKitRealmSwiftTests {
             XCTAssertEqual(object.identifier, "myID")
             XCTAssertEqual(object.secret, "mySecret")
         }
+    }
+}
+
+final class RecoveryTestBill: Object {
+    @objc dynamic var id = ""
+    override class func primaryKey() -> String? { "id" }
+}
+
+// A failed snapshot must not select a winner, publish a partial store, or consume either input.
+final class TrackingStoreRecoveryTests: XCTestCase {
+    func testCorruptSecondSourceCanBeRetriedWithoutReplayingAcknowledgedWork() throws {
+        let fm = FileManager.default
+        let directory = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: directory) }
+        let paths = ["a.realm", "b.realm"].map { directory.appendingPathComponent($0) }
+        let active = directory.appendingPathComponent("Recovered/tracking.realm")
+        let target = Realm.Configuration(fileURL: directory.appendingPathComponent("model.realm"),
+                                         objectTypes: [RecoveryTestBill.self])
+        let recordID = RecoveryTestBill.className() + ".one"
+        func writeStore(_ index: Int, _ state: SyncedEntityState) throws {
+            try autoreleasepool {
+                var cfg = RealmSwiftAdapter.defaultPersistenceConfiguration()
+                cfg.fileURL = paths[index]
+                let realm = try Realm(configuration: cfg)
+                try realm.write { realm.add(SyncedEntity(entityType: RecoveryTestBill.className(), identifier: recordID, state: state.rawValue)) }
+            }
+        }
+        try writeStore(0, .deleted)
+        try Data("invalid realm".utf8).write(to: paths[1])
+        let original = try Data(contentsOf: paths[0])
+        XCTAssertThrowsError(try DefaultRealmSwiftAdapterProvider.recover(paths, to: active, target: target))
+        XCTAssertFalse(fm.fileExists(atPath: active.deletingLastPathComponent().path))
+        XCTAssertEqual(try Data(contentsOf: paths[0]), original)
+        try fm.removeItem(at: paths[1])
+        try writeStore(1, .changed)
+        try DefaultRealmSwiftAdapterProvider.recover(paths, to: active, target: target)
+        var cfg = RealmSwiftAdapter.defaultPersistenceConfiguration()
+        cfg.fileURL = active
+        let recovered = try Realm(configuration: cfg)
+        // No local copy remains. A cloud copy must be eligible for import, not deletion.
+        XCTAssertNil(recovered.object(ofType: SyncedEntity.self, forPrimaryKey: recordID))
+        // A successful retry keeps the same active store, including later acknowledgements.
+        try recovered.write {
+            recovered.add(SyncedEntity(entityType: RecoveryTestBill.className(), identifier: recordID,
+                                       state: SyncedEntityState.synced.rawValue))
+        }
+        try DefaultRealmSwiftAdapterProvider.recover(paths, to: active, target: target)
+        XCTAssertEqual(recovered.object(ofType: SyncedEntity.self, forPrimaryKey: recordID)?.entityState, .synced)
+        XCTAssertEqual(try Data(contentsOf: paths[0]), original)
     }
 }
