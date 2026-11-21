@@ -9,6 +9,16 @@ import Foundation
 import CloudKit
 import RealmSwift
 
+/// Raised when SyncKit cannot merge the tracking stores that earlier versions left at different paths.
+/// Sync stays disabled until the stores can be merged, or until `CloudKitSynchronizer.eraseLocalMetadata()`
+/// abandons them so that the next adapter starts from a fresh store. The stores themselves are kept.
+public enum TrackingStoreRecoveryError: Error {
+    /// The store holds shared records or unresolved relationships, which recovery does not reconcile.
+    case unsupportedContent(URL)
+    /// The store could not be copied or opened.
+    case unreadableStore(URL, underlyingError: Error)
+}
+
 public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
     
     let zoneID: CKRecordZone.ID
@@ -19,11 +29,16 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
     let appGroup: String?
     public private(set) var adapter: RealmSwiftAdapter!
     
-    public init(targetConfiguration: Realm.Configuration, zoneID: CKRecordZone.ID, appGroup: String? = nil) {
+    public convenience init(targetConfiguration: Realm.Configuration, zoneID: CKRecordZone.ID, appGroup: String? = nil) {
+        self.init(targetConfiguration: targetConfiguration, zoneID: zoneID, appGroup: appGroup,
+                  paths: Self.storePaths(appGroup: appGroup))
+    }
+
+    init(targetConfiguration: Realm.Configuration, zoneID: CKRecordZone.ID, appGroup: String?,
+         paths: (active: URL, sources: [URL])) {
         self.targetConfiguration = targetConfiguration
         self.zoneID = zoneID
         self.appGroup = appGroup
-        let paths = Self.storePaths(appGroup: appGroup)
         historicalStores = paths.sources
         usesRecoveredStore = paths.active.deletingLastPathComponent().lastPathComponent == "Recovered"
         var configuration = RealmSwiftAdapter.defaultPersistenceConfiguration()
@@ -37,6 +52,10 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
         
         guard recordZoneID == zoneID else { return nil }
         
+        if adapter.hasDeletedChangeTracking {
+            // eraseLocalMetadata() discarded this adapter's store; keep syncing with a fresh one.
+            adapter = createAdapter()
+        }
         return adapter
     }
     
@@ -55,13 +74,21 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
     
     fileprivate func createAdapter() -> RealmSwiftAdapter {
         
-        return RealmSwiftAdapter(persistenceRealmConfiguration: persistenceConfiguration, targetRealmConfiguration: targetConfiguration, recordZoneID: zoneID) {
-            let path = self.persistenceConfiguration.fileURL!
-            if self.historicalStores.count > 1 {
-                try Self.recover(self.historicalStores, to: path, target: self.targetConfiguration)
+        let path = persistenceConfiguration.fileURL!
+        let sources = historicalStores
+        let target = targetConfiguration
+        let recovered = usesRecoveredStore
+        return RealmSwiftAdapter(persistenceRealmConfiguration: persistenceConfiguration, targetRealmConfiguration: targetConfiguration, recordZoneID: zoneID, prepareStore: {
+            if sources.count > 1 {
+                try Self.recover(sources, to: path, target: target)
             }
             try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
-        }
+        }, discardStore: {
+            // Resetting sync metadata gives up on histories that were never merged. Publishing the
+            // Recovered directory (the commit marker) makes the next adapter start from a fresh store.
+            guard recovered else { return }
+            try? FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+        })
     }
     
     // MARK: - File directory
@@ -103,13 +130,26 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
         if fm.fileExists(atPath: published.path) { return }
         let directory = published.deletingLastPathComponent()
         try fm.createDirectory(at: directory, withIntermediateDirectories: true)
-        let staging = directory.appendingPathComponent(UUID().uuidString)
-        try fm.createDirectory(at: staging, withIntermediateDirectories: false)
-        defer { try? fm.removeItem(at: staging) }
+        removeAbandonedWorkDirectories(in: directory)
+        let work = directory.appendingPathComponent(workDirectoryPrefix + UUID().uuidString, isDirectory: true)
+        let staging = work.appendingPathComponent("Store", isDirectory: true)
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: work) }
+        // Read writable copies: older file formats need an upgrade that read-only Realms cannot perform,
+        // and the sources themselves must stay byte-for-byte intact.
+        let snapshots = try paths.enumerated().map { index, path -> (path: URL, snapshot: URL) in
+            let snapshot = work.appendingPathComponent("Source-\(index).realm")
+            do {
+                try fm.copyItem(at: path, to: snapshot)
+            } catch {
+                throw TrackingStoreRecoveryError.unreadableStore(path, underlyingError: error)
+            }
+            return (path, snapshot)
+        }
         let reader = DispatchQueue(label: "SyncKit.trackingStoreRecovery")
         try reader.sync {
             try autoreleasepool {
-                try writeRecoveredStore(from: paths, to: staging.appendingPathComponent(destination.lastPathComponent),
+                try writeRecoveredStore(from: snapshots, to: staging.appendingPathComponent(destination.lastPathComponent),
                                         target: target, reader: reader)
             }
         }
@@ -121,22 +161,44 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
         }
     }
 
-    private static func writeRecoveredStore(from paths: [URL], to file: URL,
+    private static let workDirectoryPrefix = ".recovery-"
+
+    /// Work directories from an interrupted attempt are never published. The age check leaves alone an
+    /// attempt that another process may still be running.
+    private static func removeAbandonedWorkDirectories(in directory: URL) {
+        let fm = FileManager.default
+        let names = (try? fm.contentsOfDirectory(atPath: directory.path)) ?? []
+        for name in names where name.hasPrefix(workDirectoryPrefix) {
+            let url = directory.appendingPathComponent(name)
+            let modified = (try? fm.attributesOfItem(atPath: url.path)[.modificationDate]) as? Date
+            if modified.map({ $0.timeIntervalSinceNow < -600 }) ?? true {
+                try? fm.removeItem(at: url)
+            }
+        }
+    }
+
+    private static func writeRecoveredStore(from sources: [(path: URL, snapshot: URL)], to file: URL,
                                             target: Realm.Configuration, reader: DispatchQueue) throws {
         let config = RealmSwiftAdapter.defaultPersistenceConfiguration()
         var groups = [String: [SyncedEntity]]()
-        let sources = try paths.map { path -> Realm in
-            var source = config
-            source.fileURL = path
-            source.readOnly = true
-            return try Realm(configuration: source, queue: reader)
-        }
-        for source in sources {
+        var openSources = [Realm]()
+        for (path, snapshot) in sources {
+            var configuration = config
+            configuration.fileURL = snapshot
+            let source: Realm
+            do {
+                source = try Realm(configuration: configuration, queue: reader)
+            } catch {
+                throw TrackingStoreRecoveryError.unreadableStore(path, underlyingError: error)
+            }
+            openSources.append(source)
             // Shared graphs need relationship-aware reconciliation; leave them intact.
-            guard source.objects(PendingRelationship.self).isEmpty else { throw CocoaError(.featureUnsupported) }
+            guard source.objects(PendingRelationship.self).isEmpty else { throw TrackingStoreRecoveryError.unsupportedContent(path) }
             for row in source.objects(SyncedEntity.self) {
                 guard row.share == nil, row.entityType != "CKShare",
-                      let state = SyncedEntityState(rawValue: row.state), state != .inserted else { throw CocoaError(.featureUnsupported) }
+                      let state = SyncedEntityState(rawValue: row.state), state != .inserted else {
+                    throw TrackingStoreRecoveryError.unsupportedContent(path)
+                }
                 groups[row.identifier, default: []].append(row)
             }
         }
@@ -144,7 +206,8 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
         let local = try Realm(configuration: target)
         var localTypes = [String: String]()
         for schema in local.schema.objectSchema {
-            guard let key = schema.primaryKeyProperty?.name else { throw CocoaError(.featureUnsupported) }
+            // Like RealmSwiftAdapter.setup(), only types with a primary key are synchronized.
+            guard !schema.isEmbedded, let key = schema.primaryKeyProperty?.name else { continue }
             for object in local.dynamicObjects(schema.className) {
                 guard let value = object[key] else { throw CocoaError(.fileReadCorruptFile) }
                 localTypes[schema.className + "." + String(describing: value)] = schema.className
@@ -157,29 +220,28 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
             for (id, rows) in groups {
                 let hasLocal = localTypes[id] != nil
                 let states = rows.map { $0.entityState }
+                // Keys edited locally and not uploaded yet. A `.new` row also records edits made after its insert.
+                let editKeys = Set(rows.filter { $0.entityState == .changed || $0.entityState == .new }
+                    .flatMap { $0.changedKeys?.components(separatedBy: ",") ?? [] })
+                    .filter { !$0.isEmpty && !$0.hasPrefix("$") }
                 let pendingWrite = states.contains(.new) || states.contains(.changed)
-                let deleted = states.contains(.deleted)
                 let state: SyncedEntityState
                 if hasLocal {
-                    if states.contains(.new) { state = .new }
-                    else if states.contains(.changed) { state = .changed }
-                    else if deleted { state = .new }
+                    if states.contains(.changed) || !editKeys.isEmpty { state = .changed }
+                    else if states.contains(.new) { state = .new }
+                    // Synced, or deleted in another history: keep the bill and reconcile it with the cloud copy.
                     else { state = .synced }
                 } else {
                     // An edit/delete disagreement with no local copy is restored by a full fetch.
-                    guard deleted && !pendingWrite else { continue }
+                    guard states.contains(.deleted) && !pendingWrite else { continue }
                     state = .deleted
                 }
                 let entry = SyncedEntity(entityType: rows[0].entityType, identifier: id, state: state.rawValue)
-                if state != .synced {
-                    var keys = Set(rows.filter { state != .deleted && $0.entityState == .changed }
-                            .flatMap { $0.changedKeys?.components(separatedBy: ",") ?? [] })
-                    keys.insert(SyncedEntity.recoveryKey)
-                    entry.changedKeys = keys.sorted().joined(separator: ",")
-                }
-                // Use the delete's own baseline for conditional replay, never another store's revision.
-                let baselines = rows.filter { state == .deleted && $0.entityState == .deleted }
-                if let bytes = baselines.compactMap({ $0.record?.encodedRecord }).first {
+                let keys = (state == .changed ? editKeys : []).union([SyncedEntity.recoveryKey])
+                entry.changedKeys = keys.sorted().joined(separator: ",")
+                // Use a delete's own baseline for conditional replay, never another store's revision.
+                let baselines = rows.filter { $0.entityState == .deleted }.compactMap { $0.record?.encodedRecord }
+                if state == .deleted, let bytes = newestRecordData(baselines) {
                     let record = Record()
                     record.encodedRecord = bytes
                     entry.record = record
@@ -192,6 +254,18 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
                 merged.add(entry)
             }
         }
+    }
+
+    /// When several histories hold a pending delete, only the newest baseline can still match the
+    /// server: CloudKit revisions only move forward.
+    private static func newestRecordData(_ candidates: [Data]) -> Data? {
+        func modificationDate(_ data: Data) -> Date {
+            guard let coder = try? NSKeyedUnarchiver(forReadingFrom: data) else { return .distantPast }
+            coder.requiresSecureCoding = false
+            defer { coder.finishDecoding() }
+            return CKRecord(coder: coder)?.modificationDate ?? .distantPast
+        }
+        return candidates.max { modificationDate($0) < modificationDate($1) }
     }
 
     fileprivate static func applicationDocumentsDirectory() -> String? {

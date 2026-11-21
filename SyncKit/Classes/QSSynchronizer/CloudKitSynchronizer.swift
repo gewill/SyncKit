@@ -153,6 +153,8 @@ public class CloudKitSynchronizer: NSObject {
     internal weak var currentOperation: Operation?
     internal var uploadRetries = 0
     internal var didNotifyUpload = Set<CKRecordZone.ID>()
+    /// First error of an adapter skipped during this synchronization, reported when it finishes.
+    internal var initializationFailure: Error?
     
     
     /// Default number of records to send in an upload operation.
@@ -211,13 +213,6 @@ public class CloudKitSynchronizer: NSObject {
         guard !syncing else {
             completion?(SyncError.alreadySyncing)
             return
-        }
-        
-        for adapter in modelAdapters {
-            if let error = (adapter as? ModelAdapterInitialization)?.initializationError {
-                completion?(error)
-                return
-            }
         }
 
         debugPrint("CloudKitSynchronizer >> Initiating synchronization")
