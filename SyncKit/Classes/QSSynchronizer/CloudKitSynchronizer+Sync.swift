@@ -14,11 +14,19 @@ extension CloudKitSynchronizer {
         dispatchQueue.async {
             self.postNotification(.SynchronizerWillSynchronize)
             self.delegate?.synchronizerWillStartSyncing(self)
+            // Adapters whose store failed to open are left out, and their error is reported after the
+            // others have synced. When none can sync, fail before contacting CloudKit.
+            let failures = self.modelAdapters.compactMap { $0.initializationFailure }
+            if let failure = failures.first, failures.count == self.modelAdapters.count {
+                self.finishSynchronization(error: failure)
+                return
+            }
+            self.initializationFailure = failures.first
             self.serverChangeToken = self.storedDatabaseToken
             self.uploadRetries = 0
             self.didNotifyUpload = Set<CKRecordZone.ID>()
             
-            self.modelAdapters.forEach {
+            self.usableModelAdapters.forEach {
                 $0.prepareToImport()
             }
             
@@ -27,6 +35,8 @@ extension CloudKitSynchronizer {
     }
     
     func finishSynchronization(error: Error?) {
+        let error = error ?? initializationFailure
+        initializationFailure = nil
         resetActiveTokens()
         
         self.uploadRetries = 0
@@ -96,12 +106,21 @@ extension CloudKitSynchronizer {
             }
             
             if let adapter = modelAdapter {
+                if let failure = adapter.initializationFailure {
+                    initializationFailure = initializationFailure ?? failure
+                    continue
+                }
                 filteredZoneIDs.append(zoneID)
                 activeZoneTokens[zoneID] = adapter.serverChangeToken
             }
         }
         
         return filteredZoneIDs
+    }
+
+    /// Adapters that can take part in a synchronization.
+    var usableModelAdapters: [ModelAdapter] {
+        return modelAdapters.filter { $0.initializationFailure == nil }
     }
     
     func resetActiveTokens() {
@@ -357,10 +376,11 @@ extension CloudKitSynchronizer {
     
     func uploadChanges(completion: @escaping (Error?)->()) {
         
-        sequential(objects: modelAdapters, closure: setupZoneAndUploadRecords) { (error) in
+        let adapters = usableModelAdapters
+        sequential(objects: adapters, closure: setupZoneAndUploadRecords) { (error) in
             guard error == nil else { completion(error); return }
             
-            self.sequential(objects: self.modelAdapters, closure: self.uploadDeletions, final: completion)
+            self.sequential(objects: adapters, closure: self.uploadDeletions, final: completion)
         }
     }
     

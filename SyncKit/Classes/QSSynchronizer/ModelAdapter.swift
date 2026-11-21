@@ -134,3 +134,14 @@ public extension Notification.Name {
     /// - Returns: Array of `CKRecord`
     func recordsToUpdateParentRelationshipsForRoot(_ object: AnyObject) -> [CKRecord]
 }
+
+protocol ModelAdapterInitialization {
+    var initializationError: Error? { get }
+}
+
+extension ModelAdapter {
+    /// Error that keeps this adapter out of synchronization, such as a tracking store that failed to open.
+    var initializationFailure: Error? {
+        return (self as? ModelAdapterInitialization)?.initializationError
+    }
+}
