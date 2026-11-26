@@ -22,8 +22,15 @@ extension CloudKitSynchronizer {
      -Returns: A new CloudKit synchronizer for the given realm.
      */
     public class func privateSynchronizer(containerName: String, configuration: Realm.Configuration, suiteName: String? = nil, recordZoneID: CKRecordZone.ID? = nil) -> CloudKitSynchronizer {
+        return privateSynchronizer(containerName: containerName, configuration: configuration, suiteName: suiteName,
+                                   recordZoneID: recordZoneID, observeImport: nil)
+    }
+
+    /// Configure observation for this private database, including adapters recreated after recovery.
+    public class func privateSynchronizer(containerName: String, configuration: Realm.Configuration, suiteName: String? = nil, recordZoneID: CKRecordZone.ID? = nil, observeImport: RealmSwiftAdapter.ImportObservation?) -> CloudKitSynchronizer {
         let zoneID = recordZoneID ?? defaultCustomZoneID
         let provider = DefaultRealmSwiftAdapterProvider(targetConfiguration: configuration, zoneID: zoneID)
+        provider.observeImport = observeImport
         let userDefaults = UserDefaults(suiteName: suiteName)!
         let userDefaultsAdapter = UserDefaultsAdapter(userDefaults: userDefaults)
         let container = CKContainer(identifier: containerName)

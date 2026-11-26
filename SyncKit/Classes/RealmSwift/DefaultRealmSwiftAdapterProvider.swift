@@ -27,6 +27,9 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
     private let historicalStores: [URL]
     let usesRecoveredStore: Bool
     let appGroup: String?
+    var observeImport: RealmSwiftAdapter.ImportObservation? {
+        didSet { adapter.observeImport = observeImport }
+    }
     public private(set) var adapter: RealmSwiftAdapter!
     
     public convenience init(targetConfiguration: Realm.Configuration, zoneID: CKRecordZone.ID, appGroup: String? = nil) {
@@ -78,7 +81,7 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
         let sources = historicalStores
         let target = targetConfiguration
         let recovered = usesRecoveredStore
-        return RealmSwiftAdapter(persistenceRealmConfiguration: persistenceConfiguration, targetRealmConfiguration: targetConfiguration, recordZoneID: zoneID, prepareStore: {
+        let newAdapter = RealmSwiftAdapter(persistenceRealmConfiguration: persistenceConfiguration, targetRealmConfiguration: targetConfiguration, recordZoneID: zoneID, prepareStore: {
             if sources.count > 1 {
                 try Self.recover(sources, to: path, target: target)
             }
@@ -89,6 +92,8 @@ public class DefaultRealmSwiftAdapterProvider: NSObject, AdapterProvider {
             guard recovered else { return }
             try? FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
         })
+        newAdapter.observeImport = observeImport
+        return newAdapter
     }
     
     // MARK: - File directory

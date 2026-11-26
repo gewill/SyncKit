@@ -119,7 +119,11 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
         TempFileManager(identifier: "\(recordZoneID.ownerName).\(recordZoneID.zoneName)")
     }()
     
-    private(set) var initializationError: Error?
+    /// Invoked on main inside the remote import write, before affected records change.
+    /// Return a closure to inspect the committed target values immediately after a successful write.
+    public typealias ImportObservation = (Realm, [CKRecord.ID]) -> (() -> Void)?
+    public var observeImport: ImportObservation?
+    public private(set) var initializationError: Error?
     /// Set once deleteChangeTracking() has removed this adapter's store; it can't sync any more.
     private(set) var hasDeletedChangeTracking = false
     private let discardStore: () -> Void
@@ -479,9 +483,14 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
         }
     }
     
-    func commitTargetWriteTransactionWithoutNotifying() {
+    func commitTargetWriteTransactionWithoutNotifying(afterCommit: (() -> Void)? = nil) {
         
-        try? realmProvider.targetRealm.commitWrite(withoutNotifying: Array(objectNotificationTokens.values))
+        do {
+            try realmProvider.targetRealm.commitWrite(withoutNotifying: Array(objectNotificationTokens.values))
+            afterCommit?()
+        } catch {
+            // A failed write must never be reported as a committed import.
+        }
     }
     
     @discardableResult
@@ -1071,7 +1080,8 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
         
         executeOnMainQueue {
             self.realmProvider.persistenceRealm.beginWrite()
-            self.realmProvider.targetRealm .beginWrite()
+            self.realmProvider.targetRealm.beginWrite()
+            let afterCommit = observeImport?(self.realmProvider.targetRealm, records.map(\.recordID))
             
             for record in records {
                 
@@ -1119,10 +1129,9 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             // Order is important here. Notifications might be delivered after targetRealm is saved and
             // it's convenient if the persistenceRealm is not in a write transaction
             try? self.realmProvider.persistenceRealm.commitWrite()
-            commitTargetWriteTransactionWithoutNotifying()
+            commitTargetWriteTransactionWithoutNotifying(afterCommit: afterCommit)
         }
     }
-    
     public func deleteRecords(with recordIDs: [CKRecord.ID]) {
         debugPrint("Deleting records with record ids \(recordIDs)")
         guard recordIDs.count != 0,
@@ -1134,6 +1143,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
 
             self.realmProvider.persistenceRealm.beginWrite()
             self.realmProvider.targetRealm.beginWrite()
+            let afterCommit = observeImport?(self.realmProvider.targetRealm, recordIDs)
             
             for recordID in recordIDs {
                 
@@ -1174,7 +1184,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             }
             
             try? self.realmProvider.persistenceRealm.commitWrite()
-            self.commitTargetWriteTransactionWithoutNotifying()
+            self.commitTargetWriteTransactionWithoutNotifying(afterCommit: afterCommit)
         }
     }
     
