@@ -33,6 +33,13 @@ class SyncedEntity: Object {
         return "identifier"
     }
     
+    // Not a Realm property name. didUpload clears the marker with the acknowledged keys.
+    static let recoveryKey = "$SyncKitRecovery"
+    static let confirmedDeleteKey = "$SyncKitRecovery,$ConfirmedDelete"
+    var isRecovering: Bool {
+        changedKeys?.components(separatedBy: ",").contains(Self.recoveryKey) == true
+    }
+
     var entityState: SyncedEntityState {
         set {
             state = newValue.rawValue

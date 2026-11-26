@@ -81,15 +81,9 @@ struct RealmProvider {
     let persistenceRealm: Realm
     let targetRealm: Realm
     
-    init?(persistenceConfiguration: Realm.Configuration, targetConfiguration: Realm.Configuration) {
-        
-        guard let persistenceRealm = try? Realm(configuration: persistenceConfiguration),
-            let targetRealm = try? Realm(configuration: targetConfiguration) else {
-                return nil
-        }
-        
-        self.persistenceRealm = persistenceRealm
-        self.targetRealm = targetRealm
+    init(persistenceConfiguration: Realm.Configuration, targetConfiguration: Realm.Configuration) throws {
+        persistenceRealm = try Realm(configuration: persistenceConfiguration)
+        targetRealm = try Realm(configuration: targetConfiguration)
     }
 }
 
@@ -125,6 +119,10 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
         TempFileManager(identifier: "\(recordZoneID.ownerName).\(recordZoneID.zoneName)")
     }()
     
+    private(set) var initializationError: Error?
+    /// Set once deleteChangeTracking() has removed this adapter's store; it can't sync any more.
+    private(set) var hasDeletedChangeTracking = false
+    private let discardStore: () -> Void
     var realmProvider: RealmProvider!
     
     var collectionNotificationTokens = [NotificationToken]()
@@ -136,14 +134,26 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
     public private(set) var hasChanges = false
     
     /* Should be initialized on main queue */
-    public init(persistenceRealmConfiguration: Realm.Configuration, targetRealmConfiguration: Realm.Configuration, recordZoneID: CKRecordZone.ID) {
+    public convenience init(persistenceRealmConfiguration: Realm.Configuration, targetRealmConfiguration: Realm.Configuration, recordZoneID: CKRecordZone.ID) {
         
+        self.init(persistenceRealmConfiguration: persistenceRealmConfiguration, targetRealmConfiguration: targetRealmConfiguration, recordZoneID: recordZoneID, prepareStore: {})
+    }
+
+    init(persistenceRealmConfiguration: Realm.Configuration, targetRealmConfiguration: Realm.Configuration,
+         recordZoneID: CKRecordZone.ID, prepareStore: () throws -> Void, discardStore: @escaping () -> Void = {}) {
         self.persistenceRealmConfiguration = persistenceRealmConfiguration
         self.targetRealmConfiguration = targetRealmConfiguration
         self.zoneID = recordZoneID
+        self.discardStore = discardStore
         
         super.init()
         
+        do {
+            try prepareStore()
+        } catch {
+            initializationError = error
+            return
+        }
         executeOnMainQueue {
             setupTypeNamesLookup()
             setupEncryptedFields()
@@ -203,14 +213,14 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
     
     func setup() {
         
-        realmProvider = RealmProvider(persistenceConfiguration: persistenceRealmConfiguration, targetConfiguration: targetRealmConfiguration)
-
-        guard let provider = realmProvider else {
-            debugPrint("RealmSwiftAdapter: Failed to initialize RealmProvider — check Realm configuration and migration")
+        let provider: RealmProvider
+        do {
+            provider = try RealmProvider(persistenceConfiguration: persistenceRealmConfiguration, targetConfiguration: targetRealmConfiguration)
+            realmProvider = provider
+        } catch {
+            initializationError = error
             return
         }
-
-        let needsInitialSetup = provider.persistenceRealm.objects(SyncedEntity.self).count <= 0
 
         for schema in provider.targetRealm.schema.objectSchema {
 
@@ -277,8 +287,8 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                     }
                 })
                 
-                if needsInitialSetup {
-                    
+                // The tracking store can predate local inserts made while sync was unavailable.
+                if getSyncedEntity(objectIdentifier: "\(schema.className).\(identifier)", realm: provider.persistenceRealm) == nil {
                     createSyncedEntity(entityType: schema.className, identifier: identifier, realm: provider.persistenceRealm)
                 }
                 
@@ -400,6 +410,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             
             if let syncedEntity = syncedEntity {
                 try? realmProvider.persistenceRealm.safeWrite {
+                    syncedEntity.changedKeys = nil
                     syncedEntity.state = SyncedEntityState.deleted.rawValue
                 }
             }
@@ -418,6 +429,19 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                 isNewChange = true
             }
             
+        } else if inserted, let syncedEntity = syncedEntity, syncedEntity.entityState == .deleted {
+
+            // Re-inserting an object whose deletion hasn't been uploaded cancels that deletion. The old
+            // baseline may describe a record that no longer exists, so upload the object as new.
+            isNewChange = true
+            try? realmProvider.persistenceRealm.safeWrite {
+                if let baseline = syncedEntity.record {
+                    realmProvider.persistenceRealm.delete(baseline)
+                }
+                syncedEntity.changedKeys = nil
+                syncedEntity.entityState = .new
+            }
+
         } else if !inserted {
             
             guard let syncedEntity = syncedEntity else {
@@ -481,9 +505,15 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
         let objectClass = realmObjectClass(name: record.recordType)
         let primaryKey = objectClass.primaryKey()!
         let objectIdentifier = getObjectIdentifier(for: syncedEntity)
-        let object = objectClass.init()
-        object.setValue(objectIdentifier, forKey: primaryKey)
-        realmProvider.targetRealm.add(object)
+        if realmProvider.targetRealm.object(ofType: objectClass, forPrimaryKey: objectIdentifier) != nil {
+            // A local object already uses this key (re-inserted before its tracking caught up), and adding
+            // another would raise a duplicate primary key exception. Merge into it as a local insert instead.
+            syncedEntity.entityState = .new
+        } else {
+            let object = objectClass.init()
+            object.setValue(objectIdentifier, forKey: primaryKey)
+            realmProvider.targetRealm.add(object)
+        }
         
         return syncedEntity;
 
@@ -569,7 +599,10 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
         
         if syncedEntity.state == SyncedEntityState.changed.rawValue || syncedEntity.state == SyncedEntityState.new.rawValue {
         
-            if mergePolicy == .server {
+            // A recovered edit was never uploaded, and a full fetch returns every record whether or not
+            // it changed since the edit, so the edited keys win. Other recovered rows follow mergePolicy.
+            let policy: MergePolicy = syncedEntity.isRecovering && syncedEntity.entityState == .changed ? .client : mergePolicy
+            if policy == .server {
                 
                 for property in object.objectSchema.properties {
                     if shouldIgnore(key: property.name) {
@@ -582,7 +615,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                     applyChange(property: property.name, record: record, object: object, syncedEntity: syncedEntity, realmProvider: realmProvider)
                 }
                 
-            } else if mergePolicy == .client {
+            } else if policy == .client {
                 
                 let changedKeys: [String] = syncedEntity.changedKeys?.components(separatedBy: ",") ?? []
                 
@@ -600,7 +633,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                     }
                 }
                 
-            } else if mergePolicy == .custom {
+            } else if policy == .custom {
                 
                 var recordChanges = [String: Any]()
                 
@@ -890,12 +923,17 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
         let primaryKey = objectClass.primaryKey()!
         let objectIdentifier = getObjectIdentifier(for: syncedEntity)
         let object = realmProvider.targetRealm.object(ofType: objectClass, forPrimaryKey: objectIdentifier)
-        let entityState = syncedEntity.state
+        // A row takes its baseline from the cloud copy. Without one the server may have no record at all
+        // (recovered rows, records deleted elsewhere), so upload the complete live object, not just the edited keys.
+        let needsFullRecord = syncedEntity.record == nil
+        let entityState = needsFullRecord ? SyncedEntityState.new.rawValue : syncedEntity.state
         
         guard let object = object else {
             // Object does not exist, but tracking syncedEntity thinks it does.
-            // We mark it as deleted so the iCloud record will get deleted too
+            // We mark it as deleted so the iCloud record will get deleted too.
+            // A recovery marker would keep that deletion from ever being uploaded, so clear it.
             try? realmProvider.persistenceRealm.write {
+                syncedEntity.changedKeys = nil
                 syncedEntity.entityState = .deleted
             }
             return nil
@@ -1038,6 +1076,16 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             for record in records {
                 
                 var syncedEntity: SyncedEntity! = getSyncedEntity(objectIdentifier: record.recordID.recordName, realm: self.realmProvider.persistenceRealm)
+                if let pending = syncedEntity, pending.isRecovering, pending.entityState == .deleted {
+                    // Reconfirm a historical delete against the current server revision.
+                    if let expected = getRecord(for: pending)?.recordChangeTag, expected == record.recordChangeTag {
+                        pending.changedKeys = SyncedEntity.confirmedDeleteKey
+                    } else {
+                        if let baseline = pending.record { self.realmProvider.persistenceRealm.delete(baseline) }
+                        self.realmProvider.persistenceRealm.delete(pending)
+                        syncedEntity = nil
+                    }
+                }
                 if syncedEntity == nil {
                     if #available(iOS 10.0, *) {
                         if let share = record as? CKShare {
@@ -1063,6 +1111,10 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                 }
                 
                 save(record: record, for: syncedEntity)
+                if syncedEntity.isRecovering && syncedEntity.entityState == .synced {
+                    // The live cloud copy has reconciled this recovered row.
+                    syncedEntity.changedKeys = nil
+                }
             }
             // Order is important here. Notifications might be delivered after targetRealm is saved and
             // it's convenient if the persistenceRealm is not in a write transaction
@@ -1087,6 +1139,12 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                 
                 if let syncedEntity = getSyncedEntity(objectIdentifier: recordID.recordName, realm: self.realmProvider.persistenceRealm) {
                     
+                    if syncedEntity.isRecovering && syncedEntity.entityState != .deleted {
+                        // Keep a local edit if the other history removed the cloud record.
+                        syncedEntity.entityState = .new
+                        if let baseline = syncedEntity.record { self.realmProvider.persistenceRealm.delete(baseline) }
+                        continue
+                    }
                     if syncedEntity.entityType != "CKShare" {
                         
                         let objectClass = realmObjectClass(name: syncedEntity.entityType)
@@ -1122,7 +1180,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
     
     public func persistImportedChanges(completion: @escaping ((Error?) -> Void)) {
         guard realmProvider != nil else {
-            completion(nil)
+            completion(initializationError)
             return
         }
         
@@ -1185,7 +1243,7 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             let predicate = NSPredicate(format: "state == %ld", SyncedEntityState.deleted.rawValue)
             let deletedEntities = self.realmProvider.persistenceRealm.objects(SyncedEntity.self).filter(predicate)
             
-            for syncedEntity in deletedEntities {
+            for syncedEntity in deletedEntities where !syncedEntity.isRecovering || syncedEntity.changedKeys == SyncedEntity.confirmedDeleteKey {
                 
                 if recordIDs.count >= limit {
                     break
@@ -1334,6 +1392,9 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
                 print("Error deleting file at \(url): \(error)")
             }
         }
+
+        hasDeletedChangeTracking = true
+        discardStore()
     }
     
     public var recordZoneID: CKRecordZone.ID {
@@ -1369,6 +1430,23 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
             }
             
             if let token = token {
+                if serverToken.token == nil {
+                    // The first full fetch is complete. Unconfirmed tombstones had no live server record.
+                    let tracking = self.realmProvider.persistenceRealm
+                    let stale = tracking.objects(SyncedEntity.self).filter("state == %@ AND changedKeys == %@",
+                                                                         SyncedEntityState.deleted.rawValue, SyncedEntity.recoveryKey)
+                    for entry in Array(stale) {
+                        if let record = entry.record { tracking.delete(record) }
+                        tracking.delete(entry)
+                    }
+                    // Recovered bills that the full fetch never returned have no cloud record. Keep them,
+                    // and recreate them in full instead of leaving local-only rows that never sync.
+                    let missing = tracking.objects(SyncedEntity.self).filter("state == %@ AND changedKeys == %@",
+                                                                           SyncedEntityState.synced.rawValue, SyncedEntity.recoveryKey)
+                    for entry in Array(missing) {
+                        entry.entityState = .new
+                    }
+                }
                 serverToken.token = NSKeyedArchiver.archivedData(withRootObject: token)
             } else {
                 serverToken.token = nil
@@ -1448,3 +1526,5 @@ public class RealmSwiftAdapter: NSObject, ModelAdapter {
     }
 
 }
+
+extension RealmSwiftAdapter: ModelAdapterInitialization {}

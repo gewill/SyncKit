@@ -9,7 +9,7 @@
 import XCTest
 import RealmSwift
 import CloudKit
-import SyncKit
+@testable import SyncKit
 @testable import SyncKitRealmSwiftExample
 
 class SyncKitRealmSwiftTests: XCTestCase, RealmSwiftAdapterDelegate {
@@ -1715,4 +1715,410 @@ extension SyncKitRealmSwiftTests {
             XCTAssertEqual(object.secret, "mySecret")
         }
     }
+}
+
+// MARK: - Tracking store recovery
+
+final class RecoveryTestBill: Object {
+    @objc dynamic var id = ""
+    @objc dynamic var name: String?
+    @objc dynamic var price = 0
+    override class func primaryKey() -> String? { "id" }
+}
+
+/// RealmSwiftAdapter.setup() skips types without a primary key, so recovery has to skip them too.
+final class RecoveryTestNote: Object {
+    @objc dynamic var text = ""
+}
+
+/// Recovery never needs CloudKit; any call here is a test failure.
+final class RecoveryTestDatabase: NSObject, CloudKitDatabaseAdapter {
+    func add(_ operation: CKDatabaseOperation) { XCTFail("Unexpected CloudKit operation \(operation)") }
+    func save(zone: CKRecordZone, completionHandler: @escaping (CKRecordZone?, Error?) -> Void) { XCTFail("Unexpected zone save") }
+    func fetch(withRecordZoneID zoneID: CKRecordZone.ID, completionHandler: @escaping (CKRecordZone?, Error?) -> Void) { XCTFail("Unexpected zone fetch") }
+    func fetch(withRecordID recordID: CKRecord.ID, completionHandler: @escaping (CKRecord?, Error?) -> Void) { XCTFail("Unexpected record fetch") }
+    func delete(withRecordZoneID zoneID: CKRecordZone.ID, completionHandler: @escaping (CKRecordZone.ID?, Error?) -> Void) { XCTFail("Unexpected zone delete") }
+    var databaseScope: CKDatabase.Scope { .private }
+    func fetchAllSubscriptions(completionHandler: @escaping ([CKSubscription]?, Error?) -> Void) { XCTFail("Unexpected subscription fetch") }
+    func save(subscription: CKSubscription, completionHandler: @escaping (CKSubscription?, Error?) -> Void) { XCTFail("Unexpected subscription save") }
+    func delete(withSubscriptionID subscriptionID: CKSubscription.ID, completionHandler: @escaping (String?, Error?) -> Void) { XCTFail("Unexpected subscription delete") }
+}
+
+final class RecoveryTestKeyValueStore: NSObject, KeyValueStore {
+    private var values = [String: Any]()
+    func object(forKey defaultName: String) -> Any? { values[defaultName] }
+    func bool(forKey defaultName: String) -> Bool { values[defaultName] as? Bool ?? false }
+    func set(value: Any?, forKey defaultName: String) { values[defaultName] = value }
+    func set(boolValue: Bool, forKey defaultName: String) { values[defaultName] = boolValue }
+    func removeObject(forKey defaultName: String) { values[defaultName] = nil }
+}
+
+final class TrackingStoreRecoveryTests: XCTestCase {
+
+    let zoneID = CKRecordZone.ID(zoneName: "zone", ownerName: "owner")
+    var directory: URL!
+
+    override func setUpWithError() throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    // MARK: Fixtures
+
+    struct Row {
+        let id: String
+        let state: SyncedEntityState
+        var keys: String? = nil
+        var baseline: CKRecord? = nil
+    }
+
+    var target: Realm.Configuration {
+        Realm.Configuration(fileURL: directory.appendingPathComponent("model.realm"),
+                            objectTypes: [RecoveryTestBill.self, RecoveryTestNote.self])
+    }
+
+    var active: URL { directory.appendingPathComponent("Realm/Recovered/QSSyncStore.realm") }
+
+    func source(_ index: Int) -> URL { directory.appendingPathComponent("source-\(index).realm") }
+
+    func tracking(_ url: URL) -> Realm.Configuration {
+        var configuration = RealmSwiftAdapter.defaultPersistenceConfiguration()
+        configuration.fileURL = url
+        return configuration
+    }
+
+    func identifier(_ id: String) -> String { RecoveryTestBill.className() + "." + id }
+
+    func row(_ id: String, in realm: Realm) -> SyncedEntity? {
+        realm.object(ofType: SyncedEntity.self, forPrimaryKey: identifier(id))
+    }
+
+    /// A record as CloudKit returns it. Only the server sets the change tag and modification date,
+    /// so they are injected through the archive keys that CKRecord decodes them from.
+    func serverRecord(_ id: String, tag: String, modified: Date = Date(), fields: [String: CKRecordValue] = [:]) -> CKRecord {
+        let draft = CKRecord(recordType: RecoveryTestBill.className(), recordID: CKRecord.ID(recordName: identifier(id), zoneID: zoneID))
+        let archiver = NSKeyedArchiver(requiringSecureCoding: false)
+        draft.encodeSystemFields(with: archiver)
+        archiver.encode(tag, forKey: "ETag")
+        archiver.encode(modified, forKey: "RecordMtime")
+        archiver.finishEncoding()
+        let unarchiver = try! NSKeyedUnarchiver(forReadingFrom: archiver.encodedData)
+        unarchiver.requiresSecureCoding = false
+        let record = CKRecord(coder: unarchiver)!
+        unarchiver.finishDecoding()
+        for (key, value) in fields {
+            record[key] = value
+        }
+        return record
+    }
+
+    func writeHistory(_ url: URL, _ rows: [Row]) throws {
+        try autoreleasepool {
+            let realm = try Realm(configuration: tracking(url))
+            try realm.write {
+                for row in rows {
+                    let entity = SyncedEntity(entityType: RecoveryTestBill.className(), identifier: identifier(row.id), state: row.state.rawValue)
+                    entity.changedKeys = row.keys
+                    if let baseline = row.baseline {
+                        let archiver = NSKeyedArchiver(requiringSecureCoding: false)
+                        baseline.encodeSystemFields(with: archiver)
+                        archiver.finishEncoding()
+                        let record = Record()
+                        record.encodedRecord = archiver.encodedData
+                        entity.record = record
+                    }
+                    realm.add(entity)
+                }
+            }
+        }
+    }
+
+    func writeLocalBills(_ ids: [String], name: String = "Local", price: Int = 1) throws {
+        let realm = try Realm(configuration: target)
+        try realm.write {
+            for id in ids {
+                let bill = RecoveryTestBill()
+                bill.id = id
+                bill.name = name
+                bill.price = price
+                realm.add(bill, update: .modified)
+            }
+        }
+    }
+
+    func recoverHistories() throws -> RealmSwiftAdapter {
+        try DefaultRealmSwiftAdapterProvider.recover([source(0), source(1)], to: active, target: target)
+        return RealmSwiftAdapter(persistenceRealmConfiguration: tracking(active), targetRealmConfiguration: target, recordZoneID: zoneID)
+    }
+
+    func makeSynchronizer(_ provider: AdapterProvider) -> CloudKitSynchronizer {
+        CloudKitSynchronizer(identifier: "recovery-test", containerIdentifier: "recovery-test",
+                             database: RecoveryTestDatabase(), adapterProvider: provider, keyValueStore: RecoveryTestKeyValueStore())
+    }
+
+    /// Spins the main run loop so Realm notifications reach the adapter.
+    func waitUntil(_ condition: () -> Bool, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertTrue(condition(), "Timed out waiting for tracking updates", file: file, line: line)
+    }
+
+    // MARK: Recovery
+
+    // A failed snapshot must not select a winner, publish a partial store, or consume either input.
+    func testCorruptSecondSourceCanBeRetriedWithoutReplayingAcknowledgedWork() throws {
+        let fm = FileManager.default
+        let paths = [source(0), source(1)]
+        try writeHistory(paths[0], [Row(id: "one", state: .deleted)])
+        try Data("invalid realm".utf8).write(to: paths[1])
+        let original = try Data(contentsOf: paths[0])
+        XCTAssertThrowsError(try DefaultRealmSwiftAdapterProvider.recover(paths, to: active, target: target)) { error in
+            guard case TrackingStoreRecoveryError.unreadableStore(let path, _)? = error as? TrackingStoreRecoveryError else {
+                return XCTFail("Unexpected error \(error)")
+            }
+            XCTAssertEqual(path, paths[1])
+        }
+        XCTAssertFalse(fm.fileExists(atPath: active.deletingLastPathComponent().path))
+        XCTAssertEqual(try Data(contentsOf: paths[0]), original)
+        try fm.removeItem(at: paths[1])
+        try writeHistory(paths[1], [Row(id: "one", state: .changed, keys: "name")])
+        try DefaultRealmSwiftAdapterProvider.recover(paths, to: active, target: target)
+        let recovered = try Realm(configuration: tracking(active))
+        // No local copy remains. A cloud copy must be eligible for import, not deletion.
+        XCTAssertNil(row("one", in: recovered))
+        // A successful retry keeps the same active store, including later acknowledgements.
+        try recovered.write {
+            recovered.add(SyncedEntity(entityType: RecoveryTestBill.className(), identifier: identifier("one"),
+                                       state: SyncedEntityState.synced.rawValue))
+        }
+        try DefaultRealmSwiftAdapterProvider.recover(paths, to: active, target: target)
+        XCTAssertEqual(row("one", in: recovered)?.entityState, .synced)
+        XCTAssertEqual(try Data(contentsOf: paths[0]), original)
+    }
+
+    func testRecoveryMergesEveryRecordAcrossHistories() throws {
+        try writeLocalBills(["synced", "deletedElsewhere", "edited", "editedAfterInsert", "inserted", "untracked"])
+        let realm = try Realm(configuration: target)
+        try realm.write { realm.add(RecoveryTestNote()) }
+        try writeHistory(source(0), [
+            Row(id: "synced", state: .synced),
+            Row(id: "deletedElsewhere", state: .deleted, baseline: serverRecord("deletedElsewhere", tag: "d1")),
+            Row(id: "edited", state: .changed, keys: "price"),
+            Row(id: "editedAfterInsert", state: .new, keys: "name"),
+            Row(id: "inserted", state: .new),
+            Row(id: "deletedTwice", state: .deleted, baseline: serverRecord("deletedTwice", tag: "older", modified: Date(timeIntervalSince1970: 1_000))),
+            Row(id: "conflict", state: .deleted)
+        ])
+        try writeHistory(source(1), [
+            Row(id: "synced", state: .synced),
+            Row(id: "deletedElsewhere", state: .synced),
+            Row(id: "edited", state: .new),
+            Row(id: "deletedTwice", state: .deleted, baseline: serverRecord("deletedTwice", tag: "newer", modified: Date(timeIntervalSince1970: 2_000))),
+            Row(id: "conflict", state: .changed, keys: "name")
+        ])
+
+        try DefaultRealmSwiftAdapterProvider.recover([source(0), source(1)], to: active, target: target)
+
+        let merged = try Realm(configuration: tracking(active))
+        // Local bills without a pending edit wait for the cloud copy instead of overwriting it.
+        XCTAssertEqual(row("synced", in: merged)?.entityState, .synced)
+        XCTAssertEqual(row("synced", in: merged)?.changedKeys, SyncedEntity.recoveryKey)
+        XCTAssertEqual(row("deletedElsewhere", in: merged)?.entityState, .synced)
+        XCTAssertNil(row("deletedElsewhere", in: merged)?.record)
+        // Pending edits keep their edited keys, including edits made after a local insert.
+        XCTAssertEqual(row("edited", in: merged)?.entityState, .changed)
+        XCTAssertEqual(row("edited", in: merged)?.changedKeys, "$SyncKitRecovery,price")
+        XCTAssertEqual(row("editedAfterInsert", in: merged)?.entityState, .changed)
+        XCTAssertEqual(row("editedAfterInsert", in: merged)?.changedKeys, "$SyncKitRecovery,name")
+        XCTAssertEqual(row("inserted", in: merged)?.entityState, .new)
+        XCTAssertEqual(row("untracked", in: merged)?.entityState, .new)
+        XCTAssertEqual(row("untracked", in: merged)?.changedKeys, SyncedEntity.recoveryKey)
+        // A delete made in both histories is checked against the newest baseline.
+        let tombstone = try XCTUnwrap(row("deletedTwice", in: merged))
+        XCTAssertEqual(tombstone.entityState, .deleted)
+        let unarchiver = try NSKeyedUnarchiver(forReadingFrom: try XCTUnwrap(tombstone.record?.encodedRecord))
+        unarchiver.requiresSecureCoding = false
+        XCTAssertEqual(CKRecord(coder: unarchiver)?.recordChangeTag, "newer")
+        // Delete versus edit with no local copy is restored from the cloud.
+        XCTAssertNil(row("conflict", in: merged))
+    }
+
+    // MARK: Adapter
+
+    func testRecoveredSyncedBillsAreReconciledOrRecreated() throws {
+        try writeLocalBills(["inCloud", "goneFromCloud"], name: "Local", price: 5)
+        try writeHistory(source(0), [Row(id: "inCloud", state: .synced), Row(id: "goneFromCloud", state: .synced)])
+        try writeHistory(source(1), [Row(id: "inCloud", state: .synced)])
+        let adapter = try recoverHistories()
+
+        // The first full fetch returns only the bill that still exists in CloudKit.
+        adapter.saveChanges(in: [serverRecord("inCloud", tag: "t1", fields: ["name": "Cloud" as NSString, "price": 7 as NSNumber])])
+        adapter.persistImportedChanges { XCTAssertNil($0) }
+        adapter.saveToken(try XCTUnwrap(NSKeyedUnarchiver.unarchivedObject(ofClass: CKServerChangeToken.self, from: Self.archivedToken)))
+
+        let tracking = try Realm(configuration: self.tracking(active))
+        let reconciled = try XCTUnwrap(row("inCloud", in: tracking))
+        XCTAssertEqual(reconciled.entityState, .synced)
+        XCTAssertNil(reconciled.changedKeys)
+        XCTAssertNotNil(reconciled.record)
+        XCTAssertEqual(try Realm(configuration: target).object(ofType: RecoveryTestBill.self, forPrimaryKey: "inCloud")?.name, "Cloud")
+        // A bill missing from the cloud is recreated in full instead of staying local-only.
+        XCTAssertEqual(row("goneFromCloud", in: tracking)?.entityState, .new)
+        let uploads = adapter.recordsToUpload(limit: 10)
+        XCTAssertEqual(uploads.map { $0.recordID.recordName }, [identifier("goneFromCloud")])
+        XCTAssertEqual(uploads.first?["name"] as? String, "Local")
+        XCTAssertEqual(uploads.first?["price"] as? Int, 5)
+    }
+
+    func testRecoveredBillsWithoutLocalEditsTakeTheCloudCopy() throws {
+        try writeLocalBills(["untracked", "edited"], name: "Local", price: 1)
+        try writeHistory(source(0), [Row(id: "edited", state: .changed, keys: "price")])
+        try writeHistory(source(1), [Row(id: "edited", state: .synced)])
+        let adapter = try recoverHistories()
+
+        adapter.saveChanges(in: [
+            serverRecord("untracked", tag: "u1", fields: ["name": "Cloud" as NSString, "price": 9 as NSNumber]),
+            serverRecord("edited", tag: "e1", fields: ["name": "Cloud" as NSString, "price": 9 as NSNumber])
+        ])
+
+        let realm = try Realm(configuration: target)
+        // No local edit is known for an untracked bill, so the default .server policy applies.
+        let untracked = realm.object(ofType: RecoveryTestBill.self, forPrimaryKey: "untracked")
+        XCTAssertEqual(untracked?.name, "Cloud")
+        XCTAssertEqual(untracked?.price, 9)
+        // A recovered edit keeps its edited key and takes everything else from the cloud.
+        let edited = realm.object(ofType: RecoveryTestBill.self, forPrimaryKey: "edited")
+        XCTAssertEqual(edited?.price, 1)
+        XCTAssertEqual(edited?.name, "Cloud")
+    }
+
+    func testChangedRowWithoutBaselineUploadsCompleteRecord() throws {
+        try writeLocalBills(["bill"], name: "Local", price: 3)
+        try writeHistory(source(0), [Row(id: "bill", state: .changed, keys: "price")])
+        let adapter = RealmSwiftAdapter(persistenceRealmConfiguration: tracking(source(0)), targetRealmConfiguration: target, recordZoneID: zoneID)
+
+        let record = try XCTUnwrap(adapter.recordsToUpload(limit: 10).first)
+        XCTAssertEqual(record["price"] as? Int, 3)
+        XCTAssertEqual(record["name"] as? String, "Local")
+    }
+
+    func testReinsertingDeletedBillCancelsItsPendingDelete() throws {
+        try writeLocalBills(["bill"])
+        try writeHistory(source(0), [Row(id: "bill", state: .synced, baseline: serverRecord("bill", tag: "b1"))])
+        let adapter = RealmSwiftAdapter(persistenceRealmConfiguration: tracking(source(0)), targetRealmConfiguration: target, recordZoneID: zoneID)
+        let realm = try Realm(configuration: target)
+        try realm.write { realm.delete(realm.object(ofType: RecoveryTestBill.self, forPrimaryKey: "bill")!) }
+        waitUntil { adapter.recordIDsMarkedForDeletion(limit: 10).map { $0.recordName } == [identifier("bill")] }
+
+        try realm.write {
+            let bill = RecoveryTestBill()
+            bill.id = "bill"
+            bill.name = "Again"
+            realm.add(bill)
+        }
+        waitUntil { adapter.recordIDsMarkedForDeletion(limit: 10).isEmpty }
+
+        let upload = try XCTUnwrap(adapter.recordsToUpload(limit: 10).first)
+        XCTAssertEqual(upload["name"] as? String, "Again")
+        XCTAssertNil(upload.recordChangeTag)
+    }
+
+    func testRecoveredDeleteDoesNotDuplicateReinsertedBill() throws {
+        try writeLocalBills(["other"])
+        try writeHistory(source(0), [Row(id: "bill", state: .deleted, baseline: serverRecord("bill", tag: "older"))])
+        try writeHistory(source(1), [Row(id: "other", state: .synced)])
+        let adapter = try recoverHistories()
+        let realm = try Realm(configuration: target)
+        try realm.write {
+            let bill = RecoveryTestBill()
+            bill.id = "bill"
+            realm.add(bill)
+        }
+
+        // The fetch can run before the insert notification reaches the adapter.
+        adapter.saveChanges(in: [serverRecord("bill", tag: "edited-elsewhere", fields: ["name": "Cloud" as NSString])])
+
+        XCTAssertEqual(realm.objects(RecoveryTestBill.self).filter("id == %@", "bill").count, 1)
+        XCTAssertEqual(row("bill", in: try Realm(configuration: tracking(active)))?.entityState, .new)
+        XCTAssertTrue(adapter.recordIDsMarkedForDeletion(limit: 10).isEmpty)
+    }
+
+    func testRecoveredEditWhoseBillDisappearedIsUploadedAsDelete() throws {
+        try writeLocalBills(["bill"])
+        try writeHistory(source(0), [Row(id: "bill", state: .changed, keys: "price")])
+        try writeHistory(source(1), [Row(id: "bill", state: .synced)])
+        let adapter = try recoverHistories()
+        // Removed without notifying the adapter, as another process would.
+        let realm = try Realm(configuration: target)
+        try realm.write(withoutNotifying: Array(adapter.objectNotificationTokens.values)) {
+            realm.delete(realm.object(ofType: RecoveryTestBill.self, forPrimaryKey: "bill")!)
+        }
+
+        XCTAssertTrue(adapter.recordsToUpload(limit: 10).isEmpty)
+        XCTAssertEqual(adapter.recordIDsMarkedForDeletion(limit: 10).map { $0.recordName }, [identifier("bill")])
+    }
+
+    // MARK: Provider and synchronizer
+
+    func testErasingMetadataAbandonsHistoriesThatCannotBeMerged() throws {
+        try writeLocalBills(["bill"])
+        try writeHistory(source(0), [Row(id: "bill", state: .synced)])
+        try Data("invalid realm".utf8).write(to: source(1))
+        let provider = DefaultRealmSwiftAdapterProvider(targetConfiguration: target, zoneID: zoneID, appGroup: nil,
+                                                        paths: (active, [source(0), source(1)]))
+        XCTAssertTrue(provider.adapter.initializationError is TrackingStoreRecoveryError)
+
+        provider.adapter.deleteChangeTracking()
+        let replacement = try XCTUnwrap(provider.cloudKitSynchronizer(makeSynchronizer(provider), modelAdapterForRecordZoneID: zoneID) as? RealmSwiftAdapter)
+
+        XCTAssertNil(replacement.initializationError)
+        // The fresh store tracks every local bill again, and the abandoned histories stay on disk.
+        XCTAssertEqual(replacement.recordsToUpload(limit: 10).map { $0.recordID.recordName }, [identifier("bill")])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source(0).path))
+    }
+
+    func testSynchronizerReportsAdapterThatCannotOpenThroughFailurePath() throws {
+        try writeHistory(source(0), [])
+        try Data("invalid realm".utf8).write(to: source(1))
+        let provider = DefaultRealmSwiftAdapterProvider(targetConfiguration: target, zoneID: zoneID, appGroup: nil,
+                                                        paths: (active, [source(0), source(1)]))
+        let synchronizer = makeSynchronizer(provider)
+        synchronizer.addModelAdapter(provider.adapter)
+
+        let notified = expectation(forNotification: .SynchronizerDidFailToSynchronize, object: nil)
+        let finished = expectation(description: "Synchronization finished")
+        synchronizer.synchronize { error in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertTrue(error is TrackingStoreRecoveryError)
+            finished.fulfill()
+        }
+        wait(for: [notified, finished], timeout: 5)
+        XCTAssertFalse(synchronizer.syncing)
+    }
+
+    func testSynchronizerSkipsOnlyTheAdapterThatCannotOpen() throws {
+        try writeHistory(source(0), [])
+        try Data("invalid realm".utf8).write(to: source(1))
+        let broken = DefaultRealmSwiftAdapterProvider(targetConfiguration: target, zoneID: zoneID, appGroup: nil,
+                                                      paths: (active, [source(0), source(1)]))
+        let otherZone = CKRecordZone.ID(zoneName: "other", ownerName: "owner")
+        let working = RealmSwiftAdapter(persistenceRealmConfiguration: tracking(directory.appendingPathComponent("working.realm")),
+                                        targetRealmConfiguration: target, recordZoneID: otherZone)
+        let synchronizer = makeSynchronizer(broken)
+        synchronizer.addModelAdapter(broken.adapter)
+        synchronizer.addModelAdapter(working)
+
+        XCTAssertEqual(synchronizer.loadTokens(for: [zoneID, otherZone], loadAdapters: false), [otherZone])
+        XCTAssertTrue(synchronizer.initializationFailure is TrackingStoreRecoveryError)
+        XCTAssertEqual(synchronizer.usableModelAdapters.map { $0.recordZoneID }, [otherZone])
+    }
+
+    /// The same bytes as the serverChangeToken.AQAAAWPa1DUC test resource.
+    static let archivedToken = Data(base64Encoded: "YnBsaXN0MDDUAQIDBAUGHR5YJHZlcnNpb25YJG9iamVjdHNZJGFyY2hpdmVyVCR0b3ASAAGGoKUHCA0RGVUkbnVsbNIJCgsMViRjbGFzc18QD0NoYW5nZVRva2VuRGF0YYAEgALSDgkPEFdOUy5kYXRhSQEAAAFj2tQ1AoAD0hITFBVaJGNsYXNzbmFtZVgkY2xhc3Nlc11OU011dGFibGVEYXRhoxYXGF1OU011dGFibGVEYXRhVk5TRGF0YVhOU09iamVjdNISExobXxATQ0tTZXJ2ZXJDaGFuZ2VUb2tlbqIcGF8QE0NLU2VydmVyQ2hhbmdlVG9rZW5fEA9OU0tleWVkQXJjaGl2ZXLRHyBUcm9vdIABAAgAEQAaACMALQAyADcAPQBDAEgATwBhAGMAZQBqAHIAfAB+AIMAjgCXAKUAqQC3AL4AxwDMAOIA5QD7AQ0BEAEVAAAAAAAAAgEAAAAAAAAAIQAAAAAAAAAAAAAAAAAAARc=")!
 }
